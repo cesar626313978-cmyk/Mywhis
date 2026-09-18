@@ -426,15 +426,26 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
           }),
         });
 
-        const data = await res.json();
-        const serverText = (data.text || '').trim();
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData.error || (res.status === 404 
+            ? 'Ruta /api/transcribe no encontrada (404). Si estás en Vercel, asegúrate de haber desplegado la carpeta /api.' 
+            : `Error en servidor (${res.status})`);
+          console.warn('Error en /api/transcribe:', errMsg);
+          if (res.status === 503 || res.status === 404) {
+            setErrorMessage(errMsg);
+          }
+        } else {
+          const data = await res.json();
+          const serverText = (data.text || '').trim();
 
-        if (serverText) {
-          setTranscript(serverText);
-          setIsTranscribing(false);
-          return serverText;
+          if (serverText) {
+            setTranscript(serverText);
+            setIsTranscribing(false);
+            return serverText;
+          }
         }
-      } catch (apiErr) {
+      } catch (apiErr: any) {
         console.error('Error contacting /api/transcribe:', apiErr);
       } finally {
         setIsTranscribing(false);

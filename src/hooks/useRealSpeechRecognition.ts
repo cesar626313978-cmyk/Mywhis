@@ -197,9 +197,9 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
             autoGainControl: true,
-            echoCancellation: false,
-            noiseSuppression: false,
           }
         });
       } catch (specificErr) {
@@ -296,50 +296,59 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
 
     setIsRecording(true);
 
-    // 7. Try SpeechRecognition as parallel live preview
-    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognitionClass) {
-      try {
-        const recognition = new SpeechRecognitionClass();
-        recognitionRef.current = recognition;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'es-ES';
+    // 7. On Desktop only: Try SpeechRecognition as parallel live preview
+    // CRITICAL: On mobile devices (Android/iOS), running SpeechRecognition alongside MediaRecorder
+    // causes hardware mic conflict in Android OS, muting MediaRecorder and producing empty audio.
+    // Therefore, mobile devices use MediaRecorder exclusively for pristine audio recording.
+    const isMobile = typeof navigator !== 'undefined' && (
+      /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1)
+    );
 
-        let accumulated = '';
+    if (!isMobile) {
+      const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognitionClass) {
+        try {
+          const recognition = new SpeechRecognitionClass();
+          recognitionRef.current = recognition;
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'es-ES';
 
-        recognition.onresult = (event: any) => {
-          let interim = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const res = event.results[i];
-            const text = res[0].transcript;
-            if (res.isFinal) {
-              accumulated += (accumulated ? ' ' : '') + text.trim();
-            } else {
-              interim += text;
+          let accumulated = '';
+
+          recognition.onresult = (event: any) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const res = event.results[i];
+              const text = res[0].transcript;
+              if (res.isFinal) {
+                accumulated += (accumulated ? ' ' : '') + text.trim();
+              } else {
+                interim += text;
+              }
             }
-          }
-          const fullText = (accumulated + (interim ? ' ' + interim : '')).trim();
-          liveTranscriptRef.current = fullText;
-          setTranscript(fullText);
-        };
+            const fullText = (accumulated + (interim ? ' ' + interim : '')).trim();
+            liveTranscriptRef.current = fullText;
+            setTranscript(fullText);
+          };
 
-        recognition.onerror = (e: any) => {
-          console.warn('SpeechRecognition warning:', e.error);
-        };
+          recognition.onerror = (e: any) => {
+            console.warn('SpeechRecognition warning:', e.error);
+          };
 
-        recognition.onend = () => {
-          // Keep recognition alive while recording is active
-          if (isRecordingRef.current) {
-            try {
-              recognition.start();
-            } catch (e) {}
-          }
-        };
+          recognition.onend = () => {
+            if (isRecordingRef.current) {
+              try {
+                recognition.start();
+              } catch (e) {}
+            }
+          };
 
-        recognition.start();
-      } catch (recErr) {
-        console.warn('SpeechRecognition failed to start (MediaRecorder will transcribe):', recErr);
+          recognition.start();
+        } catch (recErr) {
+          console.warn('SpeechRecognition desktop notice:', recErr);
+        }
       }
     }
   }, [maxDurationSeconds]);
@@ -382,12 +391,18 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
     if (recorder && recorder.state !== 'inactive') {
       try {
         await new Promise<void>((resolve) => {
-          const timeout = setTimeout(resolve, 800);
+          const timeout = setTimeout(resolve, 1500);
           recorder.onstop = () => {
             clearTimeout(timeout);
             resolve();
           };
           try {
+            // Flush any remaining audio buffer before stopping
+            if (recorder.state === 'recording') {
+              try {
+                recorder.requestData();
+              } catch (e) {}
+            }
             recorder.stop();
           } catch (e) {
             clearTimeout(timeout);
@@ -411,7 +426,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
 
     // 1. Primary path: High-fidelity audio transcription with Gemini backend
     // Transcribes audio directly from MediaRecorder for maximum mobile accuracy, punctuation and 2-voice separation
-    if (recordedBlob && recordedBlob.size > 200) {
+    if (recordedBlob && recordedBlob.size > 50) {
       setIsTranscribing(true);
       try {
         const audioBase64 = await blobToBase64(recordedBlob);
@@ -432,9 +447,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
             ? 'Ruta /api/transcribe no encontrada (404). Si estás en Vercel, asegúrate de haber desplegado la carpeta /api.' 
             : `Error en servidor (${res.status})`);
           console.warn('Error en /api/transcribe:', errMsg);
-          if (res.status === 503 || res.status === 404) {
-            setErrorMessage(errMsg);
-          }
+          setErrorMessage(errMsg);
         } else {
           const data = await res.json();
           const serverText = (data.text || '').trim();
@@ -447,6 +460,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
         }
       } catch (apiErr: any) {
         console.error('Error contacting /api/transcribe:', apiErr);
+        setErrorMessage('Error de red al conectar con el servidor de transcripción.');
       } finally {
         setIsTranscribing(false);
       }

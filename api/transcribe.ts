@@ -39,7 +39,8 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    const cleanMimeType = (mimeType || "audio/webm").split(";")[0];
+    let cleanMimeType = (mimeType || "audio/webm").split(";")[0].toLowerCase().trim();
+    if (cleanMimeType === 'audio/x-m4a') cleanMimeType = 'audio/m4a';
 
     const audioPart = {
       inlineData: {
@@ -73,10 +74,10 @@ REGLAS:
     let transcription = "";
     let lastError = "";
 
-    // 1. Intento principal con SDK oficial
+    // 1. Intento principal con SDK oficial (3.1-flash-lite es ultra-rápido y con cuota libre)
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
       for (const modelName of modelsToTry) {
         try {
           const response = await ai.models.generateContent({
@@ -98,33 +99,41 @@ REGLAS:
 
     // 2. Fallback directo REST
     if (!transcription) {
-      const restModels = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      const restModels = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
+      const mimeTypesToTry = [cleanMimeType];
+      if (cleanMimeType === 'audio/mp4') {
+        mimeTypesToTry.push('audio/m4a', 'audio/aac');
+      }
+
       for (const m of restModels) {
-        try {
-          const restRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-            method: "POST",
-            headers: { 
-              "Content-Type": "application/json",
-              "x-goog-api-key": apiKey
-            },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  { inline_data: { mime_type: cleanMimeType, data: audioBase64 } },
-                  { text: prompt }
-                ]
-              }]
-            })
-          });
-          const restData = await restRes.json();
-          if (restRes.ok && restData.candidates?.[0]?.content?.parts?.[0]?.text) {
-            transcription = restData.candidates[0].content.parts[0].text.trim();
-            break;
-          } else if (restData.error?.message) {
-            lastError = restData.error.message;
+        if (transcription) break;
+        for (const testMime of mimeTypesToTry) {
+          try {
+            const restRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+              method: "POST",
+              headers: { 
+                "Content-Type": "application/json",
+                "x-goog-api-key": apiKey
+              },
+              body: JSON.stringify({
+                contents: [{
+                  parts: [
+                    { inline_data: { mime_type: testMime, data: audioBase64 } },
+                    { text: prompt }
+                  ]
+                }]
+              })
+            });
+            const restData = await restRes.json();
+            if (restRes.ok && restData.candidates?.[0]?.content?.parts?.[0]?.text) {
+              transcription = restData.candidates[0].content.parts[0].text.trim();
+              break;
+            } else if (restData.error?.message) {
+              lastError = restData.error.message;
+            }
+          } catch (fetchErr: any) {
+            lastError = fetchErr?.message || String(fetchErr);
           }
-        } catch (fetchErr: any) {
-          lastError = fetchErr?.message || String(fetchErr);
         }
       }
     }

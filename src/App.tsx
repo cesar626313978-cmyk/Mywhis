@@ -116,8 +116,8 @@ export default function App() {
         setOriginalText('');
         setUndoHistory([]);
         setRedoHistory([]);
-        setShareSuccessToast('No se detectó voz en la grabación. Habla más cerca del micrófono.');
-        setTimeout(() => setShareSuccessToast(null), 3500);
+        setShareSuccessToast(speech.errorMessage || 'No se detectó voz en la grabación. Habla más cerca del micrófono.');
+        setTimeout(() => setShareSuccessToast(null), 4000);
       }
     } catch (err) {
       console.error('Error transcribing audio:', err);

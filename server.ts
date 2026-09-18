@@ -77,7 +77,7 @@ REGLAS:
 4. Devuelve ÚNICAMENTE el texto transcrito sin comillas ni explicaciones adicionales. Si no hay ninguna voz humana inteligible en la grabación, responde únicamente: ""${hint}`;
 
       let response: any = null;
-      const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
       
       for (const modelName of modelsToTry) {
         try {
@@ -166,7 +166,7 @@ Texto a mejorar:
 """${rawText}"""`;
 
       let response: any = null;
-      const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
       for (const modelName of modelsToTry) {
         try {
           response = await ai.models.generateContent({

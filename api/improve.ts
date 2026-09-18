@@ -77,7 +77,7 @@ Texto a mejorar:
     // 1. Intento principal con SDK oficial
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
       for (const modelName of modelsToTry) {
         try {
           const response = await ai.models.generateContent({
@@ -99,7 +99,7 @@ Texto a mejorar:
 
     // 2. Fallback REST directo (soporta claves AQ. directamente vía HTTP)
     if (!improved) {
-      const restModels = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      const restModels = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
       for (const m of restModels) {
         try {
           const restRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {

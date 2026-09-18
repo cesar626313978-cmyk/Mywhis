@@ -180,7 +180,13 @@ Texto a mejorar:
       }
 
       const improvedText = (response?.text || "").trim();
-      return res.json({ text: improvedText || rawText });
+      if (!improvedText) {
+        return res.status(500).json({ 
+          error: "No se pudo obtener respuesta de Gemini. Verifica GEMINI_API_KEY.", 
+          text: rawText 
+        });
+      }
+      return res.json({ text: improvedText });
     } catch (error: any) {
       console.error("Error in /api/improve:", error);
       return res.status(500).json({ 

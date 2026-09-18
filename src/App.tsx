@@ -155,7 +155,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: processedText, mode: recordingMode }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.ok && data.text && data.text.trim()) {
         const cleanImproved = data.text.trim();
         const beforeText = processedText;
@@ -169,17 +169,32 @@ export default function App() {
           setImprovedWithAi(true);
           setShareSuccessToast('¡Texto mejorado: puntuación, comas y repeticiones corregidas!');
         } else {
-          setShareSuccessToast('El texto ya cuenta con una redacción óptima');
+          // Check if text is actually well-formatted
+          const startsUpper = /^[A-ZÁÉÍÓÚÑ¿¡]/.test(cleanImproved);
+          const endsPunct = /[.!?]$/.test(cleanImproved);
+          if (startsUpper && endsPunct) {
+            setShareSuccessToast('El texto ya cuenta con una redacción óptima');
+          } else {
+            // Apply client-side punctuation and capitalization fix
+            const polished = cleanImproved.charAt(0).toUpperCase() + cleanImproved.slice(1) + (endsPunct ? '' : '.');
+            setProcessedText(polished);
+            setShareSuccessToast('Texto pulido (mayúscula inicial y punto)');
+          }
         }
-        setTimeout(() => setShareSuccessToast(null), 3000);
+        setTimeout(() => setShareSuccessToast(null), 3500);
       } else {
-        setShareSuccessToast(data.error || 'No se pudo conectar con el redactor IA');
-        setTimeout(() => setShareSuccessToast(null), 3000);
+        const errorMsg = data.error || (res.status === 404
+          ? 'Ruta /api/improve no encontrada (404). Si estás en Vercel, sube la carpeta /api a GitHub y haz Redeploy.'
+          : (res.status === 503
+            ? 'Falta la clave GEMINI_API_KEY en Vercel (Settings > Environment Variables)'
+            : 'No se pudo conectar con el redactor IA'));
+        setShareSuccessToast(errorMsg);
+        setTimeout(() => setShareSuccessToast(null), 4000);
       }
     } catch (err) {
       console.error('Error improving text with AI:', err);
-      setShareSuccessToast('Error al conectar con la IA');
-      setTimeout(() => setShareSuccessToast(null), 2500);
+      setShareSuccessToast('Error al conectar con la API de IA');
+      setTimeout(() => setShareSuccessToast(null), 3000);
     } finally {
       setIsImproving(false);
     }

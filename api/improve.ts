@@ -94,7 +94,13 @@ Texto a mejorar:
     }
 
     const improved = (response?.text || "").trim();
-    return res.status(200).json({ text: improved || rawText });
+    if (!improved) {
+      return res.status(500).json({ 
+        error: "No se pudo obtener respuesta de Gemini. Verifica tu clave GEMINI_API_KEY.", 
+        text: rawText 
+      });
+    }
+    return res.status(200).json({ text: improved });
   } catch (error: any) {
     console.error("Error in Vercel /api/improve:", error);
     return res.status(500).json({ 

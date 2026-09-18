@@ -8,16 +8,6 @@ export const config = {
   },
 };
 
-let aiClient: GoogleGenAI | null = null;
-function getGenAI() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey });
-  }
-  return aiClient;
-}
-
 export default async function handler(req: any, res: any) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -41,10 +31,12 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "No hay texto para mejorar", text: "" });
     }
 
-    const ai = getGenAI();
-    if (!ai) {
+    const rawKey = process.env.GEMINI_API_KEY || "";
+    const apiKey = rawKey.trim().replace(/^["']|["']$/g, "");
+
+    if (!apiKey) {
       return res.status(503).json({ 
-        error: "Falta configurar GEMINI_API_KEY en las variables de entorno de Vercel (Settings > Environment Variables)", 
+        error: "Falta configurar GEMINI_API_KEY en Vercel (Settings > Environment Variables)", 
         text: rawText 
       });
     }
@@ -79,27 +71,67 @@ REGLAS OBLIGATORIAS:
 Texto a mejorar:
 """${rawText}"""`;
 
-    let response: any = null;
-    const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
-    for (const modelName of modelsToTry) {
-      try {
-        response = await ai.models.generateContent({
-          model: modelName,
-          contents: prompt,
-        });
-        if (response?.text) break;
-      } catch (err: any) {
-        console.warn(`[improve] Modelo ${modelName} falló:`, err?.message?.slice(0, 100));
+    let improved = "";
+    let lastError = "";
+
+    // 1. Intento principal con SDK oficial
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      for (const modelName of modelsToTry) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt,
+          });
+          if (response?.text) {
+            improved = response.text.trim();
+            break;
+          }
+        } catch (err: any) {
+          lastError = err?.message || String(err);
+          console.warn(`[improve-sdk] ${modelName} falló:`, lastError);
+        }
+      }
+    } catch (sdkErr: any) {
+      lastError = sdkErr?.message || String(sdkErr);
+    }
+
+    // 2. Fallback REST directo (soporta claves AQ. directamente vía HTTP)
+    if (!improved) {
+      const restModels = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      for (const m of restModels) {
+        try {
+          const restRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }]
+            })
+          });
+          const restData = await restRes.json();
+          if (restRes.ok && restData.candidates?.[0]?.content?.parts?.[0]?.text) {
+            improved = restData.candidates[0].content.parts[0].text.trim();
+            break;
+          } else if (restData.error?.message) {
+            lastError = restData.error.message;
+          }
+        } catch (fetchErr: any) {
+          lastError = fetchErr?.message || String(fetchErr);
+        }
       }
     }
 
-    const improved = (response?.text || "").trim();
     if (!improved) {
       return res.status(500).json({ 
-        error: "No se pudo obtener respuesta de Gemini. Verifica tu clave GEMINI_API_KEY.", 
+        error: lastError ? `Error Gemini: ${lastError}` : "No se pudo obtener respuesta de Gemini. Verifica tu clave GEMINI_API_KEY.", 
         text: rawText 
       });
     }
+
     return res.status(200).json({ text: improved });
   } catch (error: any) {
     console.error("Error in Vercel /api/improve:", error);

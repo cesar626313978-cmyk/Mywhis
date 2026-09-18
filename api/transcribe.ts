@@ -8,16 +8,6 @@ export const config = {
   },
 };
 
-let aiClient: GoogleGenAI | null = null;
-function getGenAI() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!aiClient) {
-    aiClient = new GoogleGenAI({ apiKey });
-  }
-  return aiClient;
-}
-
 export default async function handler(req: any, res: any) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -39,10 +29,12 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Falta el archivo de audio para transcribir", text: "" });
     }
 
-    const ai = getGenAI();
-    if (!ai) {
+    const rawKey = process.env.GEMINI_API_KEY || "";
+    const apiKey = rawKey.trim().replace(/^["']|["']$/g, "");
+
+    if (!apiKey) {
       return res.status(503).json({ 
-        error: "Falta configurar GEMINI_API_KEY en las variables de entorno de Vercel (Settings > Environment Variables)", 
+        error: "Falta configurar GEMINI_API_KEY en Vercel (Settings > Environment Variables)", 
         text: "" 
       });
     }
@@ -78,24 +70,64 @@ REGLAS:
 3. Si detectas claramente una conversación entre dos personas, usa "Persona 1:" y "Persona 2:".
 4. Devuelve ÚNICAMENTE el texto transcrito sin comillas ni explicaciones adicionales. Si no hay ninguna voz humana inteligible en la grabación, responde únicamente: ""${hint}`;
 
-    let response: any = null;
-    const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
-    
-    for (const modelName of modelsToTry) {
-      try {
-        response = await ai.models.generateContent({
-          model: modelName,
-          contents: { parts: [audioPart, { text: prompt }] },
-        });
-        if (response?.text !== undefined && response?.text !== null) {
-          break;
+    let transcription = "";
+    let lastError = "";
+
+    // 1. Intento principal con SDK oficial
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const modelsToTry = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      for (const modelName of modelsToTry) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: { parts: [audioPart, { text: prompt }] },
+          });
+          if (response?.text !== undefined && response?.text !== null) {
+            transcription = response.text.trim();
+            break;
+          }
+        } catch (err: any) {
+          lastError = err?.message || String(err);
+          console.warn(`[transcribe-sdk] ${modelName} falló:`, lastError);
         }
-      } catch (err: any) {
-        console.warn(`[transcribe] Modelo ${modelName} falló:`, err?.message?.slice(0, 100));
       }
+    } catch (sdkErr: any) {
+      lastError = sdkErr?.message || String(sdkErr);
     }
 
-    let transcription = (response?.text || "").trim();
+    // 2. Fallback directo REST
+    if (!transcription) {
+      const restModels = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"];
+      for (const m of restModels) {
+        try {
+          const restRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { inline_data: { mime_type: cleanMimeType, data: audioBase64 } },
+                  { text: prompt }
+                ]
+              }]
+            })
+          });
+          const restData = await restRes.json();
+          if (restRes.ok && restData.candidates?.[0]?.content?.parts?.[0]?.text) {
+            transcription = restData.candidates[0].content.parts[0].text.trim();
+            break;
+          } else if (restData.error?.message) {
+            lastError = restData.error.message;
+          }
+        } catch (fetchErr: any) {
+          lastError = fetchErr?.message || String(fetchErr);
+        }
+      }
+    }
 
     if (
       transcription === "[SILENCIO]" ||
@@ -105,6 +137,13 @@ REGLAS:
       transcription === "."
     ) {
       transcription = "";
+    }
+
+    if (!transcription && lastError) {
+      return res.status(500).json({ 
+        error: `Error Gemini: ${lastError}`, 
+        text: "" 
+      });
     }
 
     return res.status(200).json({ text: transcription });

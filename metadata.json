@@ -1,0 +1,6 @@
+{
+  "name": "Mywhis",
+  "description": "Dictado por voz local en Android con Mywhis y botón para compartir texto",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -12,6 +12,8 @@ import { PearLogo } from './components/PearLogo';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { AndroidPermissionsGuide } from './components/AndroidPermissionsGuide';
+import { PromptSettingsCard } from './components/PromptSettingsCard';
+import { DEFAULT_IMPROVE_PROMPT } from './data/defaultPrompt';
 import { useRealSpeechRecognition } from './hooks/useRealSpeechRecognition';
 
 // Helper to parse dialogue into structured speaker turns
@@ -65,6 +67,35 @@ export default function App() {
   const [showNotificationToast, setShowNotificationToast] = useState<boolean>(false);
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
   const [shareSuccessToast, setShareSuccessToast] = useState<string | null>(null);
+
+  // Custom or Default AI improvement prompt
+  const [improvePrompt, setImprovePrompt] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('mywhis_custom_prompt');
+      if (!saved) return DEFAULT_IMPROVE_PROMPT;
+      // If the saved prompt was an older default version without the lists or email rule, upgrade it
+      if (
+        (!saved.includes('FORMATO DE CORREO / EMAIL') || !saved.includes('DETECCIÓN Y FORMATO DE LISTAS')) &&
+        saved.includes('PUNTUACIÓN PERFECTA') &&
+        saved.includes('ELIMINA PALABRAS REPETIDAS')
+      ) {
+        localStorage.setItem('mywhis_custom_prompt', DEFAULT_IMPROVE_PROMPT);
+        return DEFAULT_IMPROVE_PROMPT;
+      }
+      return saved;
+    } catch (e) {
+      return DEFAULT_IMPROVE_PROMPT;
+    }
+  });
+
+  const handleResetPrompt = () => {
+    setImprovePrompt(DEFAULT_IMPROVE_PROMPT);
+    try {
+      localStorage.removeItem('mywhis_custom_prompt');
+    } catch (e) {}
+    setShareSuccessToast('Prompt restablecido al original de Mywhis');
+    setTimeout(() => setShareSuccessToast(null), 3000);
+  };
 
   // Onboarding Wizard step (0 to 7 matching user photos)
   const [wizardStep, setWizardStep] = useState<number>(0);
@@ -153,7 +184,11 @@ export default function App() {
       const res = await fetch('/api/improve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: processedText, mode: recordingMode }),
+        body: JSON.stringify({ 
+          text: processedText, 
+          mode: recordingMode,
+          customPrompt: improvePrompt 
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.text && data.text.trim()) {
@@ -1235,6 +1270,13 @@ export default function App() {
             </div>
 
             <div className="space-y-4 pt-4 text-xs">
+              {/* Prompt de Mejora con IA: editable y con botón para volver al original */}
+              <PromptSettingsCard 
+                prompt={improvePrompt}
+                onChange={setImprovePrompt}
+                onReset={handleResetPrompt}
+              />
+
               <PWAInstallButton variant="settings" />
 
               {/* Guía Completa de Permisos de Android */}

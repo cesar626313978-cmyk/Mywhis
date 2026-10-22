@@ -4,7 +4,7 @@ import {
   ChevronLeft, X, Shield, Sliders, Bell, Layers, Lock, CheckCircle2, AlertCircle, 
   ExternalLink, ArrowRight, Eye, Code, Volume2, Info, Moon, Sun, Smartphone,
   Share2, Send, MessageSquare, Mail, FileDown, Trash2, Wand2, Users, User, MessageCircle,
-  Undo2, Redo2
+  Undo2, Redo2, Bot
 } from 'lucide-react';
 import { AppSettings } from './types';
 import { initialSettings, codeModules } from './data/codeModules';
@@ -12,8 +12,14 @@ import { PearLogo } from './components/PearLogo';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { AndroidPermissionsGuide } from './components/AndroidPermissionsGuide';
-import { PromptSettingsCard } from './components/PromptSettingsCard';
-import { DEFAULT_IMPROVE_PROMPT } from './data/defaultPrompt';
+import { PromptSettingsCard, CustomPromptsMap } from './components/PromptSettingsCard';
+import { 
+  DEFAULT_GENERAL_PROMPT, 
+  DEFAULT_EMAIL_PROMPT, 
+  DEFAULT_SOCIAL_PROMPT, 
+  DEFAULT_PROMPT_BUILDER_PROMPT,
+  DEFAULT_PROMPTS
+} from './data/defaultPrompt';
 import { useRealSpeechRecognition } from './hooks/useRealSpeechRecognition';
 
 // Helper to parse dialogue into structured speaker turns
@@ -60,7 +66,7 @@ export default function App() {
   const [originalText, setOriginalText] = useState<string>('');
   const [undoHistory, setUndoHistory] = useState<string[]>([]);
   const [redoHistory, setRedoHistory] = useState<string[]>([]);
-  const [isImproving, setIsImproving] = useState<boolean>(false);
+  const [isImproving, setIsImproving] = useState<keyof CustomPromptsMap | null>(null);
   const [improvedWithAi, setImprovedWithAi] = useState<boolean>(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
@@ -68,32 +74,62 @@ export default function App() {
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
   const [shareSuccessToast, setShareSuccessToast] = useState<string | null>(null);
 
-  // Custom or Default AI improvement prompt
-  const [improvePrompt, setImprovePrompt] = useState<string>(() => {
+  // Custom or Default AI improvement prompts for the 4 sections
+  const [prompts, setPrompts] = useState<CustomPromptsMap>(() => {
     try {
-      const saved = localStorage.getItem('mywhis_custom_prompt');
-      if (!saved) return DEFAULT_IMPROVE_PROMPT;
-      // If the saved prompt was an older default version without the lists or email rule, upgrade it
-      if (
-        (!saved.includes('FORMATO DE CORREO / EMAIL') || !saved.includes('DETECCIÓN Y FORMATO DE LISTAS')) &&
-        saved.includes('PUNTUACIÓN PERFECTA') &&
-        saved.includes('ELIMINA PALABRAS REPETIDAS')
-      ) {
-        localStorage.setItem('mywhis_custom_prompt', DEFAULT_IMPROVE_PROMPT);
-        return DEFAULT_IMPROVE_PROMPT;
-      }
-      return saved;
+      const generalSaved = localStorage.getItem('mywhis_prompt_general') || localStorage.getItem('mywhis_custom_prompt') || DEFAULT_GENERAL_PROMPT;
+      const emailSaved = localStorage.getItem('mywhis_prompt_email') || DEFAULT_EMAIL_PROMPT;
+      const socialSaved = localStorage.getItem('mywhis_prompt_social') || DEFAULT_SOCIAL_PROMPT;
+      const promptSaved = localStorage.getItem('mywhis_prompt_prompt') || DEFAULT_PROMPT_BUILDER_PROMPT;
+
+      return {
+        general: generalSaved,
+        email: emailSaved,
+        social: socialSaved,
+        prompt: promptSaved,
+      };
     } catch (e) {
-      return DEFAULT_IMPROVE_PROMPT;
+      return {
+        general: DEFAULT_GENERAL_PROMPT,
+        email: DEFAULT_EMAIL_PROMPT,
+        social: DEFAULT_SOCIAL_PROMPT,
+        prompt: DEFAULT_PROMPT_BUILDER_PROMPT,
+      };
     }
   });
 
-  const handleResetPrompt = () => {
-    setImprovePrompt(DEFAULT_IMPROVE_PROMPT);
+  const handleChangePrompt = (key: keyof CustomPromptsMap, value: string) => {
+    setPrompts(prev => ({ ...prev, [key]: value }));
     try {
+      localStorage.setItem(`mywhis_prompt_${key}`, value);
+    } catch (e) {}
+  };
+
+  const handleResetPrompt = (key: keyof CustomPromptsMap) => {
+    const defaultVal = DEFAULT_PROMPTS[key];
+    setPrompts(prev => ({ ...prev, [key]: defaultVal }));
+    try {
+      localStorage.removeItem(`mywhis_prompt_${key}`);
+    } catch (e) {}
+    setShareSuccessToast(`Prompt restablecido al original de Mywhis`);
+    setTimeout(() => setShareSuccessToast(null), 3000);
+  };
+
+  const handleResetAllPrompts = () => {
+    setPrompts({
+      general: DEFAULT_GENERAL_PROMPT,
+      email: DEFAULT_EMAIL_PROMPT,
+      social: DEFAULT_SOCIAL_PROMPT,
+      prompt: DEFAULT_PROMPT_BUILDER_PROMPT,
+    });
+    try {
+      localStorage.removeItem('mywhis_prompt_general');
+      localStorage.removeItem('mywhis_prompt_email');
+      localStorage.removeItem('mywhis_prompt_social');
+      localStorage.removeItem('mywhis_prompt_prompt');
       localStorage.removeItem('mywhis_custom_prompt');
     } catch (e) {}
-    setShareSuccessToast('Prompt restablecido al original de Mywhis');
+    setShareSuccessToast('Todos los prompts restablecidos al original');
     setTimeout(() => setShareSuccessToast(null), 3000);
   };
 
@@ -118,30 +154,42 @@ export default function App() {
   const performStopRecording = async (isAutoMax: boolean = false) => {
     if (!speech.isRecording) return;
     const liveDraft = speech.transcript.trim();
-    setIsProcessing(true);
+
+    // If live speech recognition already captured text in dictation mode,
+    // transition immediately in 0ms without showing the "Procesando grabación..." spinner
+    const isInstant = Boolean(liveDraft && recordingMode === 'dictation');
+
+    if (isInstant) {
+      setOriginalText(liveDraft);
+      setProcessedText(liveDraft);
+      setUndoHistory([]);
+      setRedoHistory([]);
+      setImprovedWithAi(false); // Dictated text, ready for user to choose improvement option
+    } else {
+      setIsProcessing(true);
+    }
+
     if (isAutoMax) {
       setShareSuccessToast('⏱️ ¡Límite máximo de 40 minutos alcanzado! Transcribiendo grabación...');
     }
+
     try {
       const transcribedText = await speech.stopRecording({ mode: recordingMode });
-      if (transcribedText && transcribedText.trim()) {
-        const cleanText = transcribedText.trim();
+      const cleanText = (transcribedText || liveDraft).trim();
+
+      if (cleanText) {
         setOriginalText(cleanText);
-        if (liveDraft && liveDraft !== cleanText && liveDraft.length > 5) {
-          setUndoHistory([liveDraft]);
-        } else {
-          setUndoHistory([]);
-        }
-        setRedoHistory([]);
         setProcessedText(cleanText);
-        setImprovedWithAi(true);
+        setUndoHistory([]);
+        setRedoHistory([]);
+        setImprovedWithAi(false);
         const toastMsg = isAutoMax
           ? '¡Sesión de 40 min completada y transcrita con éxito!'
           : (recordingMode === 'conversation'
               ? '¡Conversación transcrita con identificación de 2 voces!'
-              : '¡Texto dictado listo para compartir!');
+              : '¡Texto dictado listo!');
         setShareSuccessToast(toastMsg);
-        setTimeout(() => setShareSuccessToast(null), 3500);
+        setTimeout(() => setShareSuccessToast(null), 3000);
       } else {
         setProcessedText('');
         setOriginalText('');
@@ -151,7 +199,7 @@ export default function App() {
         setTimeout(() => setShareSuccessToast(null), 4000);
       }
     } catch (err) {
-      console.error('Error transcribing audio:', err);
+      console.error('Error stopping or transcribing audio:', err);
     } finally {
       setIsProcessing(false);
     }
@@ -177,9 +225,11 @@ export default function App() {
     }
   };
 
-  const handleImproveText = async () => {
+  const handleImproveText = async (option: keyof CustomPromptsMap = 'general') => {
     if (!processedText.trim() || isImproving) return;
-    setIsImproving(true);
+    setIsImproving(option);
+    const selectedPrompt = prompts[option] || DEFAULT_PROMPTS[option];
+
     try {
       const res = await fetch('/api/improve', {
         method: 'POST',
@@ -187,7 +237,8 @@ export default function App() {
         body: JSON.stringify({ 
           text: processedText, 
           mode: recordingMode,
-          customPrompt: improvePrompt 
+          improveType: option,
+          customPrompt: selectedPrompt 
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -202,7 +253,14 @@ export default function App() {
           }
           setProcessedText(cleanImproved);
           setImprovedWithAi(true);
-          setShareSuccessToast('¡Texto mejorado: puntuación, comas y repeticiones corregidas!');
+
+          const toastMessages: Record<keyof CustomPromptsMap, string> = {
+            general: '✨ ¡Texto mejorado (General)!',
+            email: '✉️ ¡Correo redactado y estructurado!',
+            social: '💬 ¡Texto adaptado para WhatsApp / Telegram!',
+            prompt: '🤖 ¡Prompt optimizado para IA generado!',
+          };
+          setShareSuccessToast(toastMessages[option] || '¡Texto mejorado!');
         } else {
           // Check if text is actually well-formatted
           const startsUpper = /^[A-ZÁÉÍÓÚÑ¿¡]/.test(cleanImproved);
@@ -231,7 +289,7 @@ export default function App() {
       setShareSuccessToast('Error al conectar con la API de IA');
       setTimeout(() => setShareSuccessToast(null), 3000);
     } finally {
-      setIsImproving(false);
+      setIsImproving(null);
     }
   };
 
@@ -485,8 +543,9 @@ export default function App() {
                   );
 
                   return (
-                    <div className="w-full bg-white rounded-2xl border border-slate-200/90 p-3.5 sm:p-4 shadow-md space-y-2.5 animate-fadeIn max-h-[50vh] flex flex-col min-h-0">
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 gap-2">
+                    <div className="w-full bg-white rounded-2xl border border-slate-200/90 p-3.5 sm:p-4 shadow-md space-y-3 animate-fadeIn max-h-[55vh] flex flex-col min-h-0">
+                      {/* Top Header Row */}
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-2 gap-2 shrink-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-semibold text-blue-600 flex items-center gap-1">
                             <Sparkles className="w-3.5 h-3.5" />
@@ -504,22 +563,8 @@ export default function App() {
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                          {/* Botón Mejorar con IA */}
-                          <button
-                            onClick={handleImproveText}
-                            disabled={isImproving}
-                            className="flex items-center gap-1 text-xs bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white px-2.5 py-1 rounded-full transition shadow-sm font-medium active:scale-95 disabled:opacity-50"
-                            title="Tratamiento con IA: depurar diálogos, corregir puntuación y eliminar muletillas"
-                          >
-                            {isImproving ? (
-                              <RefreshCw className="w-3 h-3 animate-spin text-white" />
-                            ) : (
-                              <Wand2 className="w-3 h-3 text-amber-300" />
-                            )}
-                            <span>{isImproving ? 'Mejorando...' : 'Mejorar'}</span>
-                          </button>
 
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
                           {/* Pequeña flecha de vuelta atrás por si no nos gusta la mejora */}
                           {undoHistory.length > 0 && (
                             <button
@@ -544,20 +589,20 @@ export default function App() {
                             </button>
                           )}
 
-                          {/* Botón Compartir - Acción principal destacada para móvil */}
+                          {/* Botón Compartir */}
                           <button
                             onClick={() => handleShare(processedText)}
-                            className="flex items-center gap-1.5 text-xs sm:text-[13px] bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-full transition-all shadow-sm hover:shadow-md font-semibold active:scale-95 ring-2 ring-blue-500/25"
+                            className="flex items-center gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white px-3 py-1 rounded-full transition-all shadow-xs font-semibold active:scale-95"
                             title="Compartir con WhatsApp, Telegram, correo o cualquier app"
                           >
-                            <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" strokeWidth={2.4} />
+                            <Share2 className="w-3.5 h-3.5 shrink-0" strokeWidth={2.2} />
                             <span>Compartir</span>
                           </button>
 
                           {/* Botón Copiar */}
                           <button
                             onClick={() => handleCopy(processedText)}
-                            className="flex items-center gap-1 text-xs bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1.5 rounded-full transition shadow-xs font-medium active:scale-95"
+                            className="flex items-center gap-1 text-xs bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 rounded-full transition shadow-xs font-medium active:scale-95"
                           >
                             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                             <span>{copied ? 'Copiado' : 'Copiar'}</span>
@@ -572,10 +617,102 @@ export default function App() {
                               setRedoHistory([]);
                               setImprovedWithAi(false);
                             }}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition active:scale-90"
+                            className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition active:scale-90"
                             title="Borrar texto dictado"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 4 Opciones de Mejora con IA */}
+                      <div className="bg-slate-50/90 p-2 rounded-xl border border-slate-200/80 space-y-1.5 shrink-0">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 px-0.5">
+                          <span className="flex items-center gap-1">
+                            <Wand2 className="w-3.5 h-3.5 text-amber-500" />
+                            <span>Mejorar con IA:</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-normal">Elige una opción</span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                          {/* 1. Mejorar General */}
+                          <button
+                            type="button"
+                            onClick={() => handleImproveText('general')}
+                            disabled={!!isImproving}
+                            className={`flex items-center justify-center gap-1 text-xs py-1.5 px-2 rounded-lg font-semibold transition active:scale-95 disabled:opacity-50 ${
+                              isImproving === 'general'
+                                ? 'bg-amber-600 text-white shadow-xs'
+                                : 'bg-white hover:bg-amber-50 text-slate-800 border border-slate-200 hover:border-amber-300'
+                            }`}
+                            title="Mejorar texto dictado (listas, puntuación, fluidez)"
+                          >
+                            {isImproving === 'general' ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                            ) : (
+                              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            )}
+                            <span>Mejorar</span>
+                          </button>
+
+                          {/* 2. Mejorar para Correo */}
+                          <button
+                            type="button"
+                            onClick={() => handleImproveText('email')}
+                            disabled={!!isImproving}
+                            className={`flex items-center justify-center gap-1 text-xs py-1.5 px-2 rounded-lg font-semibold transition active:scale-95 disabled:opacity-50 ${
+                              isImproving === 'email'
+                                ? 'bg-rose-600 text-white shadow-xs'
+                                : 'bg-white hover:bg-rose-50 text-slate-800 border border-slate-200 hover:border-rose-300'
+                            }`}
+                            title="Mejorar para correo electrónico (Estructura con Asunto, Saludo y Firma)"
+                          >
+                            {isImproving === 'email' ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                            ) : (
+                              <Mail className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                            )}
+                            <span className="truncate">Para correo</span>
+                          </button>
+
+                          {/* 3. Mejorar para Redes Sociales */}
+                          <button
+                            type="button"
+                            onClick={() => handleImproveText('social')}
+                            disabled={!!isImproving}
+                            className={`flex items-center justify-center gap-1 text-xs py-1.5 px-2 rounded-lg font-semibold transition active:scale-95 disabled:opacity-50 ${
+                              isImproving === 'social'
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-white hover:bg-emerald-50 text-slate-800 border border-slate-200 hover:border-emerald-300'
+                            }`}
+                            title="Mejorar para WhatsApp, Telegram o redes sociales (Mensaje directo y ágil)"
+                          >
+                            {isImproving === 'social' ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                            ) : (
+                              <MessageSquare className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            )}
+                            <span className="truncate">Para redes</span>
+                          </button>
+
+                          {/* 4. Mejorar para Prompt */}
+                          <button
+                            type="button"
+                            onClick={() => handleImproveText('prompt')}
+                            disabled={!!isImproving}
+                            className={`flex items-center justify-center gap-1 text-xs py-1.5 px-2 rounded-lg font-semibold transition active:scale-95 disabled:opacity-50 ${
+                              isImproving === 'prompt'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-white hover:bg-indigo-50 text-slate-800 border border-slate-200 hover:border-indigo-300'
+                            }`}
+                            title="Mejorar para prompt de inteligencia artificial o constructor de IA"
+                          >
+                            {isImproving === 'prompt' ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                            ) : (
+                              <Bot className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                            )}
+                            <span className="truncate">Para prompt</span>
                           </button>
                         </div>
                       </div>
@@ -1270,11 +1407,12 @@ export default function App() {
             </div>
 
             <div className="space-y-4 pt-4 text-xs">
-              {/* Prompt de Mejora con IA: editable y con botón para volver al original */}
+              {/* Prompts de Mejora con IA (4 secciones) */}
               <PromptSettingsCard 
-                prompt={improvePrompt}
-                onChange={setImprovePrompt}
-                onReset={handleResetPrompt}
+                prompts={prompts}
+                onChangePrompt={handleChangePrompt}
+                onResetPrompt={handleResetPrompt}
+                onResetAll={handleResetAllPrompts}
               />
 
               <PWAInstallButton variant="settings" />

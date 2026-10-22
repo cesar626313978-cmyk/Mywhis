@@ -1,0 +1,6 @@
+{
+  "summary":  "Plan de implementacion para transcripcion simultanea en tiempo real y visualizacion instantanea al parar el dictado, eliminando tiempos de espera innecesarios y reservando el procesamiento con IA exclusivamente para los botones de mejora manuales.",
+  "updatedAt":  "2026-10-22T06:52:02.882338996Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

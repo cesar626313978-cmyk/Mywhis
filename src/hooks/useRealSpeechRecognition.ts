@@ -296,59 +296,66 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
 
     setIsRecording(true);
 
-    // 7. On Desktop only: Try SpeechRecognition as parallel live preview
-    // CRITICAL: On mobile devices (Android/iOS), running SpeechRecognition alongside MediaRecorder
-    // causes hardware mic conflict in Android OS, muting MediaRecorder and producing empty audio.
-    // Therefore, mobile devices use MediaRecorder exclusively for pristine audio recording.
-    const isMobile = typeof navigator !== 'undefined' && (
-      /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-      (navigator.maxTouchPoints > 1)
-    );
+    // 7. Universal SpeechRecognition: Real-time simultaneous live transcription on PC and Mobile
+    const SpeechRecognitionClass = typeof window !== 'undefined' 
+      ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) 
+      : null;
 
-    if (!isMobile) {
-      const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognitionClass) {
-        try {
-          const recognition = new SpeechRecognitionClass();
-          recognitionRef.current = recognition;
-          recognition.continuous = true;
-          recognition.interimResults = true;
-          recognition.lang = 'es-ES';
+    if (SpeechRecognitionClass) {
+      try {
+        const recognition = new SpeechRecognitionClass();
+        recognitionRef.current = recognition;
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'es-ES';
+        recognition.maxAlternatives = 1;
 
-          let accumulated = '';
+        let sessionPrefix = '';
 
-          recognition.onresult = (event: any) => {
-            let interim = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-              const res = event.results[i];
-              const text = res[0].transcript;
-              if (res.isFinal) {
-                accumulated += (accumulated ? ' ' : '') + text.trim();
-              } else {
-                interim += text;
-              }
+        recognition.onresult = (event: any) => {
+          let currentFinal = '';
+          let currentInterim = '';
+
+          for (let i = 0; i < event.results.length; i++) {
+            const res = event.results[i];
+            if (res.isFinal) {
+              currentFinal += (currentFinal ? ' ' : '') + res[0].transcript.trim();
+            } else {
+              currentInterim += res[0].transcript;
             }
-            const fullText = (accumulated + (interim ? ' ' + interim : '')).trim();
+          }
+
+          const combinedFinal = (sessionPrefix ? (sessionPrefix + ' ' + currentFinal) : currentFinal).trim();
+          const fullText = (combinedFinal + (currentInterim ? (combinedFinal ? ' ' : '') + currentInterim.trim() : '')).trim();
+
+          if (fullText) {
             liveTranscriptRef.current = fullText;
             setTranscript(fullText);
-          };
+          }
+        };
 
-          recognition.onerror = (e: any) => {
+        recognition.onerror = (e: any) => {
+          // Non-fatal warning (e.g. 'no-speech' during long pauses)
+          if (e.error !== 'no-speech') {
             console.warn('SpeechRecognition warning:', e.error);
-          };
+          }
+        };
 
-          recognition.onend = () => {
-            if (isRecordingRef.current) {
-              try {
-                recognition.start();
-              } catch (e) {}
+        recognition.onend = () => {
+          if (isRecordingRef.current) {
+            // Save whatever we got so far as prefix before restarting
+            if (liveTranscriptRef.current) {
+              sessionPrefix = liveTranscriptRef.current.trim();
             }
-          };
+            try {
+              recognition.start();
+            } catch (e) {}
+          }
+        };
 
-          recognition.start();
-        } catch (recErr) {
-          console.warn('SpeechRecognition desktop notice:', recErr);
-        }
+        recognition.start();
+      } catch (recErr) {
+        console.warn('SpeechRecognition initialization notice:', recErr);
       }
     }
   }, [maxDurationSeconds]);
@@ -384,20 +391,38 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
       }
     }
 
-    // Stop MediaRecorder and gather audio
+    // Reference MediaRecorder instance
     const recorder = mediaRecorderRef.current;
+
+    // Check live text immediately
+    const liveText = liveTranscriptRef.current.trim();
+
+    // 1. Instantaneous path: If we have live transcript and are in dictation mode,
+    // deliver result IMMEDIATELY in 0 ms without blocking network calls or server delays
+    if (recordingMode === 'dictation' && liveText) {
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch (e) {}
+      }
+      stopAudioAnalysis();
+      setTranscript(liveText);
+      setIsTranscribing(false);
+      return liveText;
+    }
+
+    // Stop MediaRecorder and gather audio for conversation diarization or fallback
     let recordedBlob: Blob | null = null;
 
     if (recorder && recorder.state !== 'inactive') {
       try {
         await new Promise<void>((resolve) => {
-          const timeout = setTimeout(resolve, 1500);
+          const timeout = setTimeout(resolve, 800);
           recorder.onstop = () => {
             clearTimeout(timeout);
             resolve();
           };
           try {
-            // Flush any remaining audio buffer before stopping
             if (recorder.state === 'recording') {
               try {
                 recorder.requestData();
@@ -422,10 +447,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
     // Stop audio tracks after recorder finished flushing
     stopAudioAnalysis();
 
-    const liveText = liveTranscriptRef.current.trim();
-
-    // 1. Primary path: High-fidelity audio transcription with Gemini backend
-    // Transcribes audio directly from MediaRecorder for maximum mobile accuracy, punctuation and 2-voice separation
+    // 2. Server audio transcription path: Used for 2-voice conversation mode or when live transcript was empty
     if (recordedBlob && recordedBlob.size > 50) {
       setIsTranscribing(true);
       try {
@@ -444,7 +466,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           const errMsg = errData.error || (res.status === 404 
-            ? 'Ruta /api/transcribe no encontrada (404). Si estás en Vercel, asegúrate de haber desplegado la carpeta /api.' 
+            ? 'Ruta /api/transcribe no encontrada (404).' 
             : `Error en servidor (${res.status})`);
           console.warn('Error en /api/transcribe:', errMsg);
           setErrorMessage(errMsg);
@@ -466,27 +488,14 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
       }
     }
 
-    // 2. Fallback path: If audio upload was not available or server returned empty, improve live transcript
+    // 3. Last resort fallback: return liveText if any
     if (liveText) {
-      try {
-        const res = await fetch('/api/improve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: liveText, mode: recordingMode }),
-        });
-        const data = await res.json();
-        const improved = (data.text || liveText).trim();
-        setTranscript(improved);
-        setIsTranscribing(false);
-        return improved;
-      } catch (err) {
-        const formatted = liveText.charAt(0).toUpperCase() + liveText.slice(1);
-        setTranscript(formatted);
-        setIsTranscribing(false);
-        return formatted;
-      }
+      setTranscript(liveText);
+      setIsTranscribing(false);
+      return liveText;
     }
 
+    setIsTranscribing(false);
     return '';
   }, []);
 

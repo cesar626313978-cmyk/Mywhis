@@ -18,7 +18,7 @@ interface UseSpeechRecognitionReturn {
   hasPermission: boolean | null; // null = unprompted, true = granted, false = denied
   errorMessage: string | null;
   startRecording: () => Promise<void>;
-  stopRecording: (options?: { mode?: 'dictation' | 'conversation' }) => Promise<string>;
+  stopRecording: (options?: { mode?: 'dictation' | 'conversation'; existingText?: string }) => Promise<string>;
   clearTranscript: () => void;
   clearError: () => void;
   isSupported: boolean;
@@ -360,7 +360,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
     }
   }, [maxDurationSeconds]);
 
-  const stopRecording = useCallback(async (options?: { mode?: 'dictation' | 'conversation' }): Promise<string> => {
+  const stopRecording = useCallback(async (options?: { mode?: 'dictation' | 'conversation'; existingText?: string }): Promise<string> => {
     const recordingMode = options?.mode || 'dictation';
     setIsRecording(false);
     isRecordingRef.current = false;
@@ -394,8 +394,8 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
     // Reference MediaRecorder instance
     const recorder = mediaRecorderRef.current;
 
-    // Check live text immediately
-    const liveText = liveTranscriptRef.current.trim();
+    // Check live text immediately from options, ref, or state
+    const liveText = (options?.existingText || liveTranscriptRef.current || transcript || '').trim();
 
     // 1. Instantaneous path: If we have live transcript and are in dictation mode,
     // deliver result IMMEDIATELY in 0 ms without blocking network calls or server delays
@@ -463,14 +463,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
           }),
         });
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          const errMsg = errData.error || (res.status === 404 
-            ? 'Ruta /api/transcribe no encontrada (404).' 
-            : `Error en servidor (${res.status})`);
-          console.warn('Error en /api/transcribe:', errMsg);
-          setErrorMessage(errMsg);
-        } else {
+        if (res.ok) {
           const data = await res.json();
           const serverText = (data.text || '').trim();
 
@@ -479,10 +472,11 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
             setIsTranscribing(false);
             return serverText;
           }
+        } else {
+          console.warn('/api/transcribe responded with:', res.status);
         }
       } catch (apiErr: any) {
         console.error('Error contacting /api/transcribe:', apiErr);
-        setErrorMessage('Error de red al conectar con el servidor de transcripción.');
       } finally {
         setIsTranscribing(false);
       }
@@ -497,7 +491,7 @@ export function useRealSpeechRecognition(options?: UseSpeechRecognitionOptions):
 
     setIsTranscribing(false);
     return '';
-  }, []);
+  }, [transcript]);
 
   useEffect(() => {
     return () => {

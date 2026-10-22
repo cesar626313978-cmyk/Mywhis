@@ -2,22 +2,69 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Disable Vite dev HMR WebSocket inside AI Studio iframe preview
+      (function() {
+        try {
+          var OrigWS = window.WebSocket;
+          if (OrigWS) {
+            window.WebSocket = function(url, protocols) {
+              if (protocols === 'vite-hmr' || (typeof url === 'string' && (url.indexOf('vite-hmr') !== -1 || url.indexOf('/@vite/') !== -1))) {
+                var target = new EventTarget();
+                target.readyState = 3; // CLOSED
+                target.send = function() {};
+                target.close = function() {};
+                target.onopen = null;
+                target.onclose = null;
+                target.onerror = null;
+                target.onmessage = null;
+                return target;
+              }
+              return new OrigWS(url, protocols);
+            };
+            window.WebSocket.prototype = OrigWS.prototype;
+            window.WebSocket.CONNECTING = OrigWS.CONNECTING;
+            window.WebSocket.OPEN = OrigWS.OPEN;
+            window.WebSocket.CLOSING = OrigWS.CLOSING;
+            window.WebSocket.CLOSED = OrigWS.CLOSED;
+          }
+        } catch (e) {}
+
+        // Intercept and swallow uncaught Vite HMR errors so they don't break the UI
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event && event.reason && String(event.reason).toLowerCase().indexOf('websocket') !== -1) {
+            event.preventDefault();
+            if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+          }
+        }, true);
+        window.addEventListener('error', function(event) {
+          var msg = String(event && (event.message || event.error) || '').toLowerCase();
+          if (msg.indexOf('websocket') !== -1 || msg.indexOf('vite') !== -1) {
+            event.preventDefault();
+            if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+    <!-- Google Identity Services (Google Sign-In) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Mywhis - Dictado por voz</title>
-    <meta name="description" content="Dictado por voz local en Android con Mywhis y botón para compartir texto" />
+    <title>Mywhis - Dictado Inteligente y Transformación con IA</title>
+    <meta name="description" content="Dictado por voz continuo (30-40 min), transcripción en tiempo real y transformación inteligente con IA para correo, redes y prompts." />
     
     <!-- PWA & Mobile Meta Tags -->
-    <meta name="theme-color" content="#fafafc" />
+    <meta name="theme-color" content="#090d16" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Mywhis" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 
-    <meta property="og:title" content="Mywhis - Dictado por voz" />
-    <meta property="og:description" content="Dictado por voz local en Android con Mywhis y botón para compartir texto" />
+    <meta property="og:title" content="Mywhis - Dictado Inteligente y Transformación con IA" />
+    <meta property="og:description" content="Dictado por voz continuo de hasta 40 min, transcripción en tiempo real con pantalla apagada y transformación instantánea con IA." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
   </head>

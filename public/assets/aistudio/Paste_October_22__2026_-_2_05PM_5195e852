@@ -1,0 +1,610 @@
+Sustituye todo el contenido de tu archivo src/App.tsx por este código corregido. Con esto:
+
+El dictado en vivo en el PC funcionará al instante y al pulsar Stop no se borrará ni se lanzará nada solo, el texto se quedará limpio en la pantalla.
+
+Los 4 botones de mejora actuarán de forma inmediata sobre el texto que hay en pantalla.
+
+En el modal de Ajustes tendrás un botón bien visible de "Guardar Ajustes" con confirmación visual de que se han guardado para ti.
+
+TypeScript
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Mic, Square, Sparkles, Mail, Share2, Cpu, Copy, Trash2,
+  Settings, Check, Volume2, RotateCcw, Loader2, Save
+} from 'lucide-react';
+
+const DEFAULT_PROMPTS = {
+  improve: `Actúa como un editor profesional experto en español. Mejora el siguiente texto transcrito por voz: corrige errores gramaticales, añade puntuación adecuada, elimina muletillas o repeticiones propias del habla y mejora la fluidez y claridad sin cambiar la intención ni el tono del autor. Devuelve únicamente el texto mejorado, sin introducciones ni explicaciones adicionales.`,
+  email: `Actúa como un director de comunicación y redactor ejecutivo senior. Tu tarea es transformar el siguiente texto dictado por voz en un correo electrónico profesional, estructurado, claro y persuasivo. Incluye una línea de "Asunto:" atractiva, un saludo formal, el cuerpo limpio en párrafos y una despedida cordial. Devuelve únicamente el correo listo para enviar.`,
+  social: `Actúa como un experto en marketing digital y copywriting. Transforma el siguiente texto dictado en una publicación magnética para redes sociales (LinkedIn, X o Instagram). Empieza con un gancho potente, párrafos cortos y escaneables, emojis estratégicos, llamada a la acción (CTA) y 3-5 hashtags relevantes. Devuelve solo la publicación lista para copiar.`,
+  ai_prompt: `Actúa como un Ingeniero de Prompts Senior. Convierte la siguiente idea o petición dictada por voz en un prompt maestro, profesional y estructurado usando secciones claras: [Rol], [Contexto], [Tarea Principal], [Restricciones] y [Formato de Salida]. Devuelve únicamente el prompt optimizado listo para usar.`
+};
+
+const PROMPT_META = {
+  improve: { label: 'Mejorar Texto', shortDesc: 'Gramática, fluidez y claridad' },
+  email: { label: 'Correo Electrónico', shortDesc: 'Asunto + cuerpo profesional' },
+  social: { label: 'Redes Sociales', shortDesc: 'Gancho, formato y hashtags' },
+  ai_prompt: { label: 'Prompt para IA', shortDesc: 'Estructura técnica avanzada' }
+};
+
+export default function App() {
+  const [rawText, setRawText] = useState(() => localStorage.getItem('vozia_raw_text') || '');
+  const [interimText, setInterimText] = useState('');
+  const [transformedText, setTransformedText] = useState('');
+  const [activeView, setActiveView] = useState<'raw' | 'transformed'>('raw');
+  const [activeMode, setActiveMode] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+  const [backupAudioBlob, setBackupAudioBlob] = useState<Blob | null>(null);
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+
+  // Prompts y borrador de configuración
+  const [prompts, setPrompts] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('vozia_custom_prompts_v3');
+      return saved ? { ...DEFAULT_PROMPTS, ...JSON.parse(saved) } : DEFAULT_PROMPTS;
+    } catch {
+      return DEFAULT_PROMPTS;
+    }
+  });
+  const [tempPrompts, setTempPrompts] = useState(prompts);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'prompts' | 'system'>('prompts');
+
+  const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const recognitionRef = useRef<any>(null);
+  const shouldKeepRecordingRef = useRef(false);
+  const wakeLockRef = useRef<any>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerIntervalRef = useRef<any>(null);
+
+  useEffect(() => {
+    localStorage.setItem('vozia_raw_text', rawText);
+  }, [rawText]);
+
+  const showToast = (msg: string, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3200);
+  };
+
+  const getApiKey = () => {
+    try {
+      return (import.meta as any).env?.VITE_GEMINI_API_KEY || (process.env as any).GEMINI_API_KEY || '';
+    } catch {
+      return '';
+    }
+  };
+
+  const enableBackgroundPersistence = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        setWakeLockActive(true);
+      }
+    } catch {}
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) {
+        if (!audioCtxRef.current) audioCtxRef.current = new AudioCtx();
+        if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
+      }
+    } catch {}
+  };
+
+  const disableBackgroundPersistence = async () => {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+      setWakeLockActive(false);
+    } catch {}
+  };
+
+  const initSpeechRecognition = () => {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) return null;
+
+    const recognition = new SpeechRec();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'es-ES';
+
+    recognition.onresult = (event: any) => {
+      let finalChunk = '';
+      let interimChunk = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalChunk += transcript + ' ';
+        } else {
+          interimChunk += transcript;
+        }
+      }
+      if (finalChunk) {
+        setRawText((prev) => (prev ? prev.trimEnd() + ' ' : '') + finalChunk.trimStart());
+      }
+      setInterimText(interimChunk);
+    };
+
+    recognition.onend = () => {
+      if (shouldKeepRecordingRef.current) {
+        setTimeout(() => {
+          if (shouldKeepRecordingRef.current && recognitionRef.current) {
+            try { recognitionRef.current.start(); } catch {}
+          }
+        }, 250);
+      } else {
+        setInterimText('');
+      }
+    };
+
+    return recognition;
+  };
+
+  const startRecording = async () => {
+    setActiveView('raw');
+    setBackupAudioBlob(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        if (audioChunksRef.current.length > 0) {
+          setBackupAudioBlob(new Blob(audioChunksRef.current, { type: mimeType }));
+        }
+        stream.getTracks().forEach((t) => t.stop());
+      };
+      recorder.start(4000);
+      mediaRecorderRef.current = recorder;
+    } catch {
+      showToast('No se pudo acceder al micrófono', 'error');
+      return;
+    }
+
+    await enableBackgroundPersistence();
+
+    const recognition = initSpeechRecognition();
+    if (recognition) {
+      recognitionRef.current = recognition;
+      shouldKeepRecordingRef.current = true;
+      try { recognition.start(); } catch {}
+    }
+
+    setIsRecording(true);
+    setElapsedSeconds(0);
+    timerIntervalRef.current = setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const stopRecording = () => {
+    shouldKeepRecordingRef.current = false;
+    setIsRecording(false);
+    setInterimText('');
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch {}
+    }
+    disableBackgroundPersistence();
+  };
+
+  // Botón manual de respaldo para transcribir si el navegador móvil no dictó en vivo
+  const transcribeBackupAudio = async () => {
+    if (!backupAudioBlob) {
+      showToast('No hay audio de respaldo grabado todavía.', 'error');
+      return;
+    }
+    setIsTranscribingAudio(true);
+    try {
+      const reader = new FileReader();
+      const base64Audio: string = await new Promise((resolve, reject) => {
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(backupAudioBlob);
+      });
+
+      const apiKey = getApiKey();
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                { text: 'Transcribe íntegramente y de forma exacta todo el audio en español. Devuelve solo el texto.' },
+                { inlineData: { mimeType: backupAudioBlob.type || 'audio/webm', data: base64Audio } }
+              ]
+            }]
+          })
+        }
+      );
+      const data = await response.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (text) {
+        setRawText((prev) => (prev ? prev + '\n\n' + text : text));
+        setActiveView('raw');
+        showToast('¡Audio transcrito con éxito!');
+      }
+    } catch {
+      showToast('Error al transcribir el audio de respaldo.', 'error');
+    } finally {
+      setIsTranscribingAudio(false);
+    }
+  };
+
+  // Transformación ágil con los 4 botones
+  const handleTransform = async (modeKey: string) => {
+    const sourceText = (rawText + ' ' + interimText).trim();
+    if (!sourceText) {
+      showToast('Primero dicta o escribe algún texto.', 'error');
+      return;
+    }
+
+    setIsProcessing(true);
+    setActiveMode(modeKey);
+
+    try {
+      const apiKey = getApiKey();
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: prompts[modeKey] }] },
+            contents: [{ role: 'user', parts: [{ text: `Texto a procesar:\n"""\n${sourceText}\n"""` }] }]
+          })
+        }
+      );
+      const data = await response.json();
+      const result = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (!result) throw new Error('Respuesta vacía');
+
+      setTransformedText(result);
+      setActiveView('transformed');
+      showToast(`¡Aplicado: ${PROMPT_META[modeKey as keyof typeof PROMPT_META].label}!`);
+    } catch {
+      showToast('Error al procesar con Gemini.', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSaveSettings = () => {
+    setPrompts(tempPrompts);
+    localStorage.setItem('vozia_custom_prompts_v3', JSON.stringify(tempPrompts));
+    setShowSettings(false);
+    showToast('¡Ajustes y prompts guardados correctamente!');
+  };
+
+  const currentDisplayedText =
+    activeView === 'transformed'
+      ? transformedText
+      : rawText + (interimText ? (rawText ? ' ' : '') + interimText : '');
+
+  const wordCount = currentDisplayedText.trim() ? currentDisplayedText.trim().split(/\s+/).length : 0;
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  return (
+    <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans">
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-full bg-slate-900 border border-slate-700 text-sm font-medium shadow-2xl flex items-center gap-2">
+          <Check className="w-4 h-4 text-emerald-400" />
+          <span>{toast.msg}</span>
+        </div>
+      )}
+
+      {/* CABECERA */}
+      <header className="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-xl sticky top-0 z-30">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg">
+              <Mic className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-base font-bold tracking-tight text-white">VozIA Studio</h1>
+              <p className="text-xs text-slate-400">{isRecording ? 'Grabando...' : 'Listo para dictar'}</p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              setTempPrompts(prompts);
+              setShowSettings(true);
+            }}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all"
+          >
+            <Settings className="w-4 h-4 text-indigo-400" />
+            <span>Configurar Prompts</span>
+          </button>
+        </div>
+      </header>
+
+      {/* CONTENIDO */}
+      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-5 flex flex-col gap-5">
+        {/* PANEL DE GRABACIÓN */}
+        <section className="bg-slate-900/60 border border-slate-800/90 rounded-3xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-all shadow-xl ${
+                isRecording
+                  ? 'bg-red-500 hover:bg-red-600 animate-pulse shadow-red-500/30'
+                  : 'bg-gradient-to-br from-indigo-500 to-violet-600 hover:scale-105 shadow-indigo-500/30'
+              }`}
+            >
+              {isRecording ? <Square className="w-6 h-6 text-white fill-white" /> : <Mic className="w-7 h-7 text-white" />}
+            </button>
+            <div>
+              <span className="text-sm font-bold text-white block">
+                {isRecording ? 'Grabando dictado...' : 'Pulsa el micrófono para dictar'}
+              </span>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="font-mono text-lg font-bold text-indigo-400">{formatTime(elapsedSeconds)}</span>
+                <span className="text-xs text-slate-400">{wordCount} palabras</span>
+                {wakeLockActive && (
+                  <span className="text-[11px] bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-500/30">
+                    Pantalla Protegida
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {backupAudioBlob && !isRecording && (
+            <button
+              onClick={transcribeBackupAudio}
+              disabled={isTranscribingAudio}
+              className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-200 text-xs font-semibold flex items-center gap-2"
+            >
+              {isTranscribingAudio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Volume2 className="w-4 h-4" />}
+              <span>Transcribir audio grabado con IA</span>
+            </button>
+          )}
+        </section>
+
+        {/* ÁREA DE TEXTO */}
+        <section className="flex-1 flex flex-col bg-slate-900/70 border border-slate-800/90 rounded-3xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800/80 bg-slate-950/40">
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setActiveView('raw')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  activeView === 'raw' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Dictado Original
+              </button>
+              {transformedText && (
+                <button
+                  onClick={() => setActiveView('transformed')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    activeView === 'transformed'
+                      ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  ✨ Resultado IA ({activeMode ? PROMPT_META[activeMode as keyof typeof PROMPT_META]?.label : 'IA'})
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="relative flex-1 flex flex-col min-h-[220px]">
+            {isProcessing && (
+              <div className="absolute inset-0 z-20 bg-slate-950/75 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                <p className="text-sm font-semibold text-white">Transformando texto con Gemini...</p>
+              </div>
+            )}
+            <textarea
+              value={currentDisplayedText}
+              onChange={(e) => {
+                if (activeView === 'transformed') setTransformedText(e.target.value);
+                else setRawText(e.target.value);
+              }}
+              placeholder="Habla por el micrófono o escribe aquí..."
+              className="w-full flex-1 min-h-[220px] p-5 bg-transparent text-slate-100 placeholder-slate-500 text-base leading-relaxed resize-none focus:outline-none"
+            />
+          </div>
+
+          {/* BARRA INFERIOR */}
+          <div className="px-4 py-3 bg-slate-950/60 border-t border-slate-800/80 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  if (!currentDisplayedText.trim()) return;
+                  if (navigator.share) {
+                    try { await navigator.share({ title: 'VozIA', text: currentDisplayedText.trim() }); } catch {}
+                  } else {
+                    navigator.clipboard.writeText(currentDisplayedText.trim());
+                    showToast('¡Copiado!');
+                  }
+                }}
+                disabled={!currentDisplayedText.trim()}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold"
+              >
+                <Share2 className="w-4 h-4" />
+                <span>Compartir</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (!currentDisplayedText.trim()) return;
+                  navigator.clipboard.writeText(currentDisplayedText.trim());
+                  showToast('¡Copiado al portapapeles!');
+                }}
+                disabled={!currentDisplayedText.trim()}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-100 text-xs font-semibold border border-slate-700"
+              >
+                <Copy className="w-4 h-4" />
+                <span>Copiar</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => {
+                if (!confirmClear) {
+                  setConfirmClear(true);
+                  setTimeout(() => setConfirmClear(false), 3000);
+                  return;
+                }
+                setRawText('');
+                setInterimText('');
+                setTransformedText('');
+                setActiveView('raw');
+                setConfirmClear(false);
+                showToast('Texto borrado');
+              }}
+              disabled={!rawText && !transformedText}
+              className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold border ${
+                confirmClear
+                  ? 'bg-red-600 text-white border-red-500'
+                  : 'bg-slate-900 hover:bg-red-950/40 text-slate-400 hover:text-red-300 border-slate-800'
+              }`}
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>{confirmClear ? '¿Confirmar?' : 'Borrar'}</span>
+            </button>
+          </div>
+        </section>
+
+        {/* 4 BOTONES DE IA */}
+        <section>
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2.5 px-1">
+            4 Botones de Transformación Rápida con IA
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <button
+              onClick={() => handleTransform('improve')}
+              disabled={isProcessing}
+              className="p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-indigo-500/40 text-left flex flex-col justify-between gap-2 transition-all active:scale-95"
+            >
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-white">Mejorar Texto</div>
+                <div className="text-[11px] text-slate-400">Gramática y fluidez</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleTransform('email')}
+              disabled={isProcessing}
+              className="p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-sky-500/40 text-left flex flex-col justify-between gap-2 transition-all active:scale-95"
+            >
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-500 to-blue-600 flex items-center justify-center text-white">
+                <Mail className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-white">Correo Electrónico</div>
+                <div className="text-[11px] text-slate-400">Asunto + email formal</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleTransform('social')}
+              disabled={isProcessing}
+              className="p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-pink-500/40 text-left flex flex-col justify-between gap-2 transition-all active:scale-95"
+            >
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white">
+                <Share2 className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-white">Redes Sociales</div>
+                <div className="text-[11px] text-slate-400">Gancho y hashtags</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => handleTransform('ai_prompt')}
+              disabled={isProcessing}
+              className="p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-emerald-500/40 text-left flex flex-col justify-between gap-2 transition-all active:scale-95"
+            >
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white">
+                <Cpu className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-white">Prompt para IA</div>
+                <div className="text-[11px] text-slate-400">Estructura profesional</div>
+              </div>
+            </button>
+          </div>
+        </section>
+      </main>
+
+      {/* MODAL DE CONFIGURACIÓN CON BOTÓN EXPLÍCITO DE GUARDAR */}
+      {showSettings && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+              <h2 className="text-base font-bold text-white">Configuración de Prompts</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveSettings}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-indigo-600/30"
+                >
+                  <Save className="w-4 h-4" /> Guardar Ajustes
+                </button>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="px-3 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold hover:text-white"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-400">Personaliza los prompts que usan los 4 botones:</p>
+                <button
+                  onClick={() => setTempPrompts(DEFAULT_PROMPTS)}
+                  className="text-xs text-slate-300 bg-slate-800 px-3 py-1.5 rounded-lg flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Restaurar fábrica
+                </button>
+              </div>
+
+              {(['improve', 'email', 'social', 'ai_prompt'] as const).map((key) => (
+                <div key={key} className="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 space-y-2">
+                  <span className="text-sm font-bold text-white">{PROMPT_META[key].label}</span>
+                  <textarea
+                    rows={3}
+                    value={tempPrompts[key]}
+                    onChange={(e) => setTempPrompts((prev) => ({ ...prev, [key]: e.target.value }))}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+Con este ajuste, el dictado se queda intacto en tu pantalla al pulsar Stop, los botones solo actúan cuando tú lo pides de forma rápida, y el botón de "Guardar Ajustes" te garantiza que tus cambios queden registrados permanentemente para ti.

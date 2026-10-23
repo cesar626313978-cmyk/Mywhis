@@ -278,14 +278,16 @@ Texto a mejorar:
           : `${DEFAULT_GENERAL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
       }
 
+      const speedConstraint = "\n\nREGLA DE FORMATO Y VELOCIDAD: Devuelve ÚNICAMENTE el texto final mejorado y pulido, en un solo bloque limpio. PROHIBIDO añadir opciones alternativas, listas de cambios explicativos o notas de autor.";
+      prompt += speedConstraint;
+
       let response: any = null;
-      // Prioritize ultra-fast low-latency models (gemini-3.1-flash-lite responds in ~2s)
+      // Prioritize fast, high-availability models with zero thinking delay
       const modelsToTry = [
+        "gemini-3-flash-preview",
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash",
-        "gemini-3.8-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3-flash-preview"
+        "gemini-3.8-flash"
       ];
       for (const modelName of modelsToTry) {
         try {
@@ -313,6 +315,93 @@ Texto a mejorar:
         error: error.message || "Error al mejorar el texto", 
         text: rawText 
       });
+    }
+  });
+
+  // Ultra-fast streaming enhancement endpoint for real-time word-by-word delivery
+  app.post("/api/improve/stream", async (req, res) => {
+    const auth = verifyUserAuth(req);
+    if (!auth.authorized) {
+      return res.status(401).json({ error: auth.error || "Acceso no autorizado", unauthorized: true });
+    }
+
+    const rawText = (req.body?.text || "").trim();
+    const mode = req.body?.mode;
+    const improveType = req.body?.improveType || req.body?.mode;
+    const customPrompt = (req.body?.customPrompt || req.body?.prompt || "").trim();
+
+    if (!rawText) {
+      return res.status(400).json({ error: "No hay texto para mejorar" });
+    }
+
+    const ai = getGenAI();
+    if (!ai) {
+      return res.status(503).json({ error: "API key no disponible" });
+    }
+
+    let prompt = "";
+    if (customPrompt) {
+      if (customPrompt.includes("{TEXTO}") || customPrompt.includes("{texto}")) {
+        prompt = customPrompt.replace(/\{TEXTO\}|\{texto\}/g, rawText);
+      } else {
+        prompt = `${customPrompt}\n\nTexto a mejorar:\n"""${rawText}"""`;
+      }
+    } else if (improveType === 'email') {
+      prompt = `${DEFAULT_EMAIL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+    } else if (improveType === 'social') {
+      prompt = `${DEFAULT_SOCIAL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+    } else if (improveType === 'prompt') {
+      prompt = `${DEFAULT_PROMPT_BUILDER_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+    } else {
+      prompt = `${DEFAULT_GENERAL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+    }
+
+    prompt += "\n\nREGLA: Devuelve ÚNICAMENTE el texto final pulido sin preámbulos, opciones ni notas.";
+
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    if (typeof (res as any).flushHeaders === "function") {
+      (res as any).flushHeaders();
+    }
+
+    const modelsToTry = [
+      "gemini-3-flash-preview",
+      "gemini-3.1-flash-lite",
+      "gemini-3.5-flash",
+      "gemini-3.8-flash"
+    ];
+
+    let streamedAny = false;
+    for (const modelName of modelsToTry) {
+      if (streamedAny) break;
+      try {
+        const stream = await ai.models.generateContentStream({
+          model: modelName,
+          contents: prompt,
+        });
+
+        for await (const chunk of stream) {
+          const text = chunk.text;
+          if (text) {
+            streamedAny = true;
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
+        }
+
+        if (streamedAny) {
+          res.write("data: [DONE]\n\n");
+          res.end();
+          return;
+        }
+      } catch (err: any) {
+        console.warn(`[improve/stream] Modelo ${modelName} falló:`, err?.message?.slice(0, 80));
+      }
+    }
+
+    if (!streamedAny) {
+      res.write(`data: ${JSON.stringify({ error: "Error al procesar stream" })}\n\n`);
+      res.end();
     }
   });
 

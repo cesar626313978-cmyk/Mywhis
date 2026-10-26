@@ -39,7 +39,7 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "No hay texto para mejorar", text: "" });
     }
 
-    const rawKey = process.env.GEMINI_API_KEY || "";
+    const rawKey = process.env.API_KEY || process.env.GEMINI_API_KEY || "";
     const apiKey = rawKey.trim().replace(/^["']|["']$/g, "");
 
     if (!apiKey) {
@@ -86,15 +86,19 @@ Texto a mejorar:
     let improved = "";
     let lastError = "";
 
-    // 1. Intento principal con SDK oficial
+    // 1. Intento principal con SDK oficial (soporta tanto claves AIza como Vertex AI AQ. del proyecto mywish-512809)
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
+      const isVertexKey = apiKey.startsWith("AQ.");
+      const ai = new GoogleGenAI({
+        apiKey,
+        ...(isVertexKey ? { vertexai: true } : {}),
+      });
+      const modelsToTry = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"];
       for (const modelName of modelsToTry) {
         try {
           const response = await ai.models.generateContent({
             model: modelName,
-            contents: prompt,
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
           });
           if (response?.text) {
             improved = response.text.trim();

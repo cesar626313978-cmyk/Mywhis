@@ -29,7 +29,7 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: "Falta el archivo de audio para transcribir", text: "" });
     }
 
-    const rawKey = process.env.GEMINI_API_KEY || "";
+    const rawKey = process.env.API_KEY || process.env.GEMINI_API_KEY || "";
     const apiKey = rawKey.trim().replace(/^["']|["']$/g, "");
 
     if (!apiKey) {
@@ -74,15 +74,19 @@ REGLAS:
     let transcription = "";
     let lastError = "";
 
-    // 1. Intento principal con SDK oficial (3.1-flash-lite es ultra-rápido y con cuota libre)
+    // 1. Intento principal con SDK oficial (soporta tanto claves AIza como Vertex AI AQ. del proyecto mywish-512809)
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"];
+      const isVertexKey = apiKey.startsWith("AQ.");
+      const ai = new GoogleGenAI({
+        apiKey,
+        ...(isVertexKey ? { vertexai: true } : {}),
+      });
+      const modelsToTry = ["gemini-3.5-transcribe", "gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
       for (const modelName of modelsToTry) {
         try {
           const response = await ai.models.generateContent({
             model: modelName,
-            contents: { parts: [audioPart, { text: prompt }] },
+            contents: [{ role: "user", parts: [audioPart, { text: prompt }] }],
           });
           if (response?.text !== undefined && response?.text !== null) {
             transcription = response.text.trim();

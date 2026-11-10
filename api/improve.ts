@@ -3,7 +3,9 @@ import {
   DEFAULT_GENERAL_PROMPT, 
   DEFAULT_EMAIL_PROMPT, 
   DEFAULT_SOCIAL_PROMPT, 
-  DEFAULT_PROMPT_BUILDER_PROMPT 
+  DEFAULT_PROMPT_BUILDER_PROMPT,
+  DEFAULT_SHOPPING_LIST_PROMPT,
+  DEFAULT_TRANSLATE_PROMPT
 } from "../src/data/defaultPrompt";
 
 export const config = {
@@ -62,8 +64,12 @@ export default async function handler(req: any, res: any) {
       prompt = `${DEFAULT_EMAIL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
     } else if (improveType === 'social') {
       prompt = `${DEFAULT_SOCIAL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
-    } else if (improveType === 'prompt') {
+    } else if (improveType === 'prompt' || improveType === 'ai_prompt') {
       prompt = `${DEFAULT_PROMPT_BUILDER_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+    } else if (improveType === 'shopping_list') {
+      prompt = `${DEFAULT_SHOPPING_LIST_PROMPT}\n\nTexto a procesar:\n"""${rawText}"""`;
+    } else if (improveType === 'translate') {
+      prompt = `${DEFAULT_TRANSLATE_PROMPT}\n\nTexto a traducir:\n"""${rawText}"""`;
     } else {
       prompt = isConversation
         ? `Eres el redactor experto de Mywhis para conversaciones.

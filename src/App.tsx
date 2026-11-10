@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic, Square, Play, Pause, Sparkles, Mail, Share2, Cpu, Copy, Trash2,
-  Settings, Check, Volume2, RotateCcw, Loader2, Save, ShieldCheck, LogOut
+  Settings, Check, Volume2, RotateCcw, Loader2, Save, ShieldCheck, LogOut,
+  ShoppingCart, Languages
 } from 'lucide-react';
 import { LockScreen, AuthUser } from './components/LockScreen';
 
@@ -11,14 +12,18 @@ const DEFAULT_PROMPTS = {
   improve: `Actúa como un editor ejecutivo senior experto en español. Reescribe y eleva profesionalmente el siguiente texto dictado por voz: corrige gramática y puntuación, elimina muletillas o repeticiones del habla y reestructura las oraciones para lograr máxima claridad, fluidez e impacto profesional. PROHIBIDO devolver el mismo texto literal de entrada (prohibido hacer eco). Devuelve únicamente el texto final mejorado, sin introducciones ni explicaciones.`,
   email: `Actúa como un director de comunicación y redactor ejecutivo senior. Tu tarea es transformar el siguiente texto dictado por voz en un correo electrónico profesional, estructurado, claro y persuasivo. Incluye una línea de "Asunto:" atractiva, un saludo formal, el cuerpo limpio en párrafos y una despedida cordial. Devuelve únicamente el correo listo para enviar.`,
   social: `Actúa como un experto en marketing digital y copywriting. Transforma el siguiente texto dictado en una publicación magnética para redes sociales (LinkedIn, X o Instagram). Empieza con un gancho potente, párrafos cortos y escaneables, emojis estratégicos, llamada a la acción (CTA) y 3-5 hashtags relevantes. Devuelve solo la publicación lista para copiar.`,
-  ai_prompt: `Actúa como un Ingeniero de Prompts Senior. Convierte la siguiente idea o petición dictada por voz en un prompt maestro, profesional y estructurado usando secciones claras: [Rol], [Contexto], [Tarea Principal], [Restricciones] y [Formato de Salida]. Devuelve únicamente el prompt optimizado listo para usar.`
+  ai_prompt: `Actúa como un Ingeniero de Prompts Senior. Convierte la siguiente idea o petición dictada por voz en un prompt maestro, profesional y estructurado usando secciones claras: [Rol], [Contexto], [Tarea Principal], [Restricciones] y [Formato de Salida]. Devuelve únicamente el prompt optimizado listo para usar.`,
+  shopping_list: `Actúa como un asistente organizador de compras de supermercado. Extrae todos los productos o artículos mencionados en el dictado, elimina conectores hablados o muletillas ("también", "y luego", "ah y", "un poco de", "hay que comprar", "apunta") y genera una lista limpia y ordenada.\nREGLAS ESTRICTAS DE FORMATO:\n1. La primera línea debe ser exactamente el título:\nLista de la compra:\n2. Debajo del título, escribe cada artículo en un renglón independiente precedido por un guion y un espacio ("- "), comenzando con letra mayúscula (conservando las cantidades si se mencionaron, ej. "- Leche entera", "- 2 docenas de huevos", "- Pan de molde").\n3. Devuelve ÚNICAMENTE la lista con ese formato exacto, sin saludos, sin despedidas ni notas adicionales.`,
+  translate: `Actúa como un traductor profesional bilingüe nativo (Español ⇄ Inglés). Analiza automáticamente el idioma del texto dictado y aplica la traducción en sentido inverso:\n1. Si el texto está en ESPAÑOL: tradúcelo al INGLÉS con fluidez natural, gramática impecable y precisión contextual.\n2. Si el texto está en INGLÉS: tradúcelo al ESPAÑOL con fluidez natural, gramática impecable y precisión contextual.\n3. Devuelve ÚNICAMENTE el texto traducido en el idioma de destino, sin introducciones, sin comillas y sin notas explicativas.`
 };
 
 const PROMPT_META = {
   improve: { label: 'Mejorar Texto', shortDesc: 'Gramática y fluidez', icon: Sparkles, color: 'from-indigo-500 to-violet-600', border: 'border-indigo-500/70 hover:border-indigo-400' },
   email: { label: 'Correo Electrónico', shortDesc: 'Asunto + formal', icon: Mail, color: 'from-sky-500 to-blue-600', border: 'border-sky-500/70 hover:border-sky-400' },
   social: { label: 'Redes Sociales', shortDesc: 'Gancho y hashtags', icon: Share2, color: 'from-pink-500 to-rose-600', border: 'border-pink-500/70 hover:border-pink-400' },
-  ai_prompt: { label: 'Prompt para IA', shortDesc: 'Estructura experta', icon: Cpu, color: 'from-emerald-500 to-teal-600', border: 'border-emerald-500/70 hover:border-emerald-400' }
+  ai_prompt: { label: 'Prompt para IA', shortDesc: 'Estructura experta', icon: Cpu, color: 'from-emerald-500 to-teal-600', border: 'border-emerald-500/70 hover:border-emerald-400' },
+  shopping_list: { label: 'Lista Compra', shortDesc: 'Lista con guiones', icon: ShoppingCart, color: 'from-amber-500 to-orange-600', border: 'border-amber-500/70 hover:border-amber-400' },
+  translate: { label: 'Traducir ES ⇄ EN', shortDesc: 'Español ⇄ Inglés', icon: Languages, color: 'from-cyan-500 to-teal-600', border: 'border-cyan-500/70 hover:border-cyan-400' }
 };
 
 export default function App() {
@@ -1090,10 +1095,10 @@ export default function App() {
           </div>
         </section>
 
-        {/* LOS 4 BOTONES DE TRANSFORMACIÓN RÁPIDA (EXACTAMENTE IGUALES A LA IMAGEN) */}
+        {/* LOS 6 BOTONES DE TRANSFORMACIÓN RÁPIDA */}
         <section className="shrink-0 pt-0.5">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-2.5">
-            {(['improve', 'email', 'social', 'ai_prompt'] as const).map((key) => {
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {(['improve', 'email', 'social', 'ai_prompt', 'shopping_list', 'translate'] as const).map((key) => {
               const meta = PROMPT_META[key];
               const IconComponent = meta.icon;
               const isThisActive = isProcessing && activeMode === key;
@@ -1103,11 +1108,11 @@ export default function App() {
                   type="button"
                   onClick={() => handleTransform(key)}
                   disabled={isProcessing}
-                  className={`p-2.5 sm:p-3 rounded-2xl bg-[#0b1120] hover:bg-slate-800/80 border ${
+                  className={`p-2 sm:p-2.5 rounded-2xl bg-[#0b1120] hover:bg-slate-800/80 border ${
                     meta.border
-                  } flex items-center gap-2.5 sm:gap-3 transition-all active:scale-95 cursor-pointer shadow-sm select-none touch-manipulation`}
+                  } flex items-center gap-2 sm:gap-2.5 transition-all active:scale-95 cursor-pointer shadow-sm select-none touch-manipulation`}
                 >
-                  <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center text-white shrink-0 shadow-sm`}>
+                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center text-white shrink-0 shadow-sm`}>
                     {isThisActive ? (
                       <Loader2 className="w-4 h-4 animate-spin text-white" />
                     ) : (
@@ -1150,9 +1155,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Pestañas de los 4 Prompts (para no hacer scroll en el móvil) */}
-            <div className="grid grid-cols-4 gap-1 p-2 bg-slate-950/60 border-b border-slate-800 shrink-0">
-              {(['improve', 'email', 'social', 'ai_prompt'] as const).map((key) => {
+            {/* Pestañas de los 6 Prompts (para no hacer scroll en el móvil) */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 p-2 bg-slate-950/60 border-b border-slate-800 shrink-0">
+              {(['improve', 'email', 'social', 'ai_prompt', 'shopping_list', 'translate'] as const).map((key) => {
                 const isSelected = activePromptTab === key;
                 return (
                   <button
@@ -1169,6 +1174,8 @@ export default function App() {
                     {key === 'email' && '✉️ Correo'}
                     {key === 'social' && '📱 Redes'}
                     {key === 'ai_prompt' && '🤖 Prompt'}
+                    {key === 'shopping_list' && '🛒 Compra'}
+                    {key === 'translate' && '🌐 Traducir'}
                   </button>
                 );
               })}
@@ -1211,7 +1218,7 @@ export default function App() {
                   onClick={() => setTempPrompts(DEFAULT_PROMPTS)}
                   className="text-indigo-400 hover:underline cursor-pointer"
                 >
-                  Restaurar los 4
+                  Restaurar los 6
                 </button>
               </div>
             </div>

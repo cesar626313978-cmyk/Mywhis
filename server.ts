@@ -9,6 +9,8 @@ import {
   DEFAULT_EMAIL_PROMPT,
   DEFAULT_SOCIAL_PROMPT,
   DEFAULT_PROMPT_BUILDER_PROMPT,
+  DEFAULT_SHOPPING_LIST_PROMPT,
+  DEFAULT_TRANSLATE_PROMPT,
 } from "./src/data/defaultPrompt";
 
 export const TARGET_GCP_PROJECT_ID = "mywish-512809";
@@ -83,6 +85,10 @@ function buildSystemInstruction(
     baseInstruction = DEFAULT_SOCIAL_PROMPT;
   } else if (modeKey === "prompt" || modeKey === "ai_prompt") {
     baseInstruction = DEFAULT_PROMPT_BUILDER_PROMPT;
+  } else if (modeKey === "shopping_list") {
+    baseInstruction = DEFAULT_SHOPPING_LIST_PROMPT;
+  } else if (modeKey === "translate") {
+    baseInstruction = DEFAULT_TRANSLATE_PROMPT;
   } else if (isConversation) {
     baseInstruction = `Eres el redactor experto de Mywhis para conversaciones.
 Pule el siguiente diálogo para dejarlo impecable, perfectamente redactado y listo para compartir, manteniendo Persona 1: y Persona 2:.`;

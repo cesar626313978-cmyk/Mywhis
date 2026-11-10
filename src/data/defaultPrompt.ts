@@ -51,11 +51,27 @@ Estructura el prompt final con las siguientes secciones en mayúsculas:
 
 Devuelve ÚNICAMENTE el prompt estructurado final, sin introducciones ni notas.`;
 
+export const DEFAULT_SHOPPING_LIST_PROMPT = `Actúa como un asistente organizador de compras de supermercado. Extrae todos los productos o artículos mencionados en el dictado, elimina conectores hablados o muletillas ("también", "y luego", "ah y", "un poco de", "hay que comprar", "apunta") y genera una lista limpia y ordenada.
+
+REGLAS ESTRICTAS DE FORMATO:
+1. La primera línea debe ser exactamente el título:
+Lista de la compra:
+2. Debajo del título, escribe cada artículo en un renglón independiente precedido por un guion y un espacio ("- "), comenzando con letra mayúscula (conservando las cantidades o detalles si se mencionaron, ej. "- Leche entera", "- 2 docenas de huevos", "- Pan de molde").
+3. Devuelve ÚNICAMENTE la lista con ese formato exacto, sin saludos, sin despedidas ni notas adicionales.`;
+
+export const DEFAULT_TRANSLATE_PROMPT = `Actúa como un traductor profesional bilingüe nativo (Español ⇄ Inglés).
+Analiza automáticamente el idioma del texto dictado y aplica la traducción en sentido inverso:
+1. Si el texto está en ESPAÑOL: tradúcelo al INGLÉS con fluidez natural, gramática impecable y precisión contextual (limpiando cualquier muletilla propia del habla).
+2. Si el texto está en INGLÉS: tradúcelo al ESPAÑOL con fluidez natural, gramática impecable y precisión contextual.
+3. Devuelve ÚNICAMENTE el texto traducido en el idioma de destino, sin introducciones, sin comillas y sin notas explicativas.`;
+
 export interface PromptConfig {
   general: string;
   email: string;
   social: string;
   prompt: string;
+  shopping_list: string;
+  translate: string;
 }
 
 export const DEFAULT_PROMPTS: PromptConfig = {
@@ -63,6 +79,8 @@ export const DEFAULT_PROMPTS: PromptConfig = {
   email: DEFAULT_EMAIL_PROMPT,
   social: DEFAULT_SOCIAL_PROMPT,
   prompt: DEFAULT_PROMPT_BUILDER_PROMPT,
+  shopping_list: DEFAULT_SHOPPING_LIST_PROMPT,
+  translate: DEFAULT_TRANSLATE_PROMPT,
 };
 
 export type PromptKey = keyof PromptConfig;

@@ -1,102 +1,125 @@
-# Blindaje de VozIA Studio: Autenticación con Google y Acceso Privado Exclusivo
+# Recepción, Transcripción y Respuesta Inteligente de Audios de WhatsApp en Mywhis
 
-Sistema de control de acceso y autenticación mediante Google (Gmail) para proteger la aplicación y garantizar que exclusivamente el propietario (`cesar626313978@gmail.com`) pueda acceder a la herramienta y consumir los créditos de la API de Gemini.
+Este plan detalla la arquitectura y experiencia de usuario para permitir que cualquier nota de voz recibida en WhatsApp pueda compartirse directamente con **Mywhis** (o cargarse desde un botón en pantalla), transcribirse de inmediato, generar una propuesta de respuesta automática con IA y mostrar el mensaje recibido en la parte superior mientras dictas o ajustas tu contestación.
 
-### User Review & Critical Decisions
+---
+
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Decisiones confirmadas por el usuario:**
-> - **Cuentas autorizadas**: Acceso exclusivo restringido a `cesar626313978@gmail.com`. Cualquier otra cuenta de Google es rechazada de inmediato.
-> - **Comportamiento sin sesión**: Pantalla de bloqueo completa que impide acceder a la app y a los controles de dictado hasta identificarse con éxito.
-> - **Persistencia de sesión**: La sesión se mantiene permanentemente activa en el dispositivo hasta que el usuario pulse deliberadamente "Cerrar sesión".
+> Se han incorporado las tres decisiones confirmadas para garantizar que el flujo sea rápido, natural en el teléfono y sin pasos innecesarios:
+
+- **Vía de entrada doble (Confirmado)**: Soportar tanto el menú nativo **"Compartir" de WhatsApp en Android** (seleccionando el icono de *Mywhis* gracias a Web Share Target en la PWA instalada) como un botón directo **"Subir Audio"** en la barra de control para elegir cualquier archivo (`.opus`, `.ogg`, `.mp3`, `.m4a`, `.wav`, `.aac`, `.webm`).
+- **Procesamiento automático con IA (Confirmado)**: Al recibir el audio de WhatsApp, el sistema **transcribe el mensaje al instante** y simultáneamente **genera un borrador de respuesta sugerida por IA** lista para usar o modificar.
+- **Vista de contexto superior para responder (Confirmado)**: El mensaje transcrito del contacto se fija en una **tarjeta plegable superior ("Mensaje recibido de WhatsApp")** con reproductor de audio integrado, dejando libre el cuadro principal inferior para que veas lo que te dijeron mientras dictas tu propia respuesta con el micrófono o editas la respuesta sugerida por la IA.
 
 ---
 
-### 1. Overview & Core Concept
+## 1. Overview & Core Concept
 
-- **Qué hace**: Bloquea el acceso público a VozIA Studio mediante una pantalla de acceso seguro. El usuario pulsa "Iniciar sesión con Google", selecciona su cuenta y, si coincide con `cesar626313978@gmail.com`, se desbloquea el editor de dictado y el motor de IA. Las peticiones a `/api/improve` y `/api/transcribe` viajan autenticadas para evitar consumo no autorizado de cuotas.
-- **Público objetivo**: Uso personal y exclusivo de César en ordenadores de sobremesa y dispositivos móviles (Android/iOS).
-- **Valor clave**: Máxima tranquilidad contra consumo accidental o malintencionado de tokens de IA por visitas casuales o indexación web, sin perder la agilidad de uso en el día a día.
-
----
-
-### 2. User Experience & Visual Design
-
-- **Flujo de Usuario**:
-  1. **Pantalla de Bloqueo (Lock Screen)**: Al abrir la app sin sesión previa, se presenta una pantalla de bienvenida elegante y minimalista en modo oscuro (`#090d16`), con el logotipo de VozIA Studio, un distintivo de "Acceso Privado" y el botón oficial de Google Sign-In.
-  2. **Autenticación con Google**:
-     - El usuario pulsa en "Iniciar sesión con Google".
-     - Se abre el selector nativo de Google o Google One Tap.
-     - Al completar la selección, se valida el correo devuelto por el token.
-  3. **Comprobación de Acceso**:
-     - Si el correo es `cesar626313978@gmail.com`: Se muestra animación de bienvenida ("¡Bienvenido, César!"), se persiste la sesión en el navegador y se muestra la interfaz completa de dictado.
-     - Si el correo es diferente: Se muestra una alerta amigable pero estricta ("Acceso denegado: Esta aplicación es privada. La cuenta conectada no tiene permisos") con botón para reintentar con otra cuenta.
-  4. **Cabecera Autenticada**: En el header de VozIA Studio se muestra un avatar discreto o chip con el correo del usuario y un botón rápido de "Cerrar sesión" (junto al botón de ajustes ⚙️).
-
-- **Estética Visual**:
-  - Paleta oscura coherente con el resto de la aplicación (`bg-[#090d16]`, bordes `border-white/10`, tarjeta con desenfoque de fondo `backdrop-blur-xl`).
-  - Botón de Google conforme a las guías de diseño oficiales (Google Identity Services) con soporte táctil grande para móviles.
-  - Opción secundaria de acceso con PIN maestro de rescate para contingencias o pruebas sin conexión.
+- **Qué hace**: Convierte a Mywhis en un centro de lectura y respuesta rápida de audios de WhatsApp. Cuando te envían un audio largo o no puedes escucharlo, lo compartes con Mywhis; en menos de 2 segundos lees lo que te han dicho, tienes una respuesta coherente sugerida en el editor y puedes dictar con tu voz cualquier matiz antes de pulsar **"Enviar a WhatsApp"**.
+- **Escenario de uso**: Usuarios en movilidad (Android y escritorio) que reciben notas de voz frecuentes en WhatsApp (`.opus` / `.ogg`) y desean leerlas al vuelo y contestar con un mensaje impecablemente redactado sin salir del flujo de trabajo.
+- **Valor principal**: Elimina la fricción de escuchar audios largos a ciegas o recordar todos los puntos mientras intentas responder, mostrando siempre el texto recibido arriba mientras compones tu contestación abajo.
 
 ---
 
-### 3. Key Product Decisions & Trade-Offs
+## 2. User Experience & Visual Design
 
-- **Decisión 1: Integración con Google Identity Services (GIS) en Frontend y Token en Headers**
-  - *Enfoque*: Cargar el SDK oficial de Google Identity Services (`https://accounts.google.com/gsi/client`) para obtener el JWT firmado de Google. Almacenar el token verificado y los datos de perfil en `localStorage` con expiración prolongada.
-  - *Por qué*: Proporciona la experiencia de login con Google nativa, moderna y directa sin requerir redirecciones complejas de OAuth en iframes o ventanas emergentes bloqueadas.
-  - *Alternativas consideradas*: Autenticación con usuario/contraseña tradicional (más engorrosa de recordar en el móvil y propensa a filtraciones si el código es visible).
+### Flujo de Usuario Paso a Paso
 
-- **Decisión 2: Doble Barrera de Protección (Cliente + Servidor Express)**
-  - *Enfoque*: 
-    1. En el **Frontend**, la pantalla de bloqueo impide interactuar con el micrófono, el editor y los botones.
-    2. En el **Backend** (`server.ts`), los endpoints `/api/improve` y `/api/transcribe` exigen la cabecera `Authorization: Bearer <token>` y comprueban la identidad del correo antes de ejecutar cualquier llamada al SDK de Gemini.
-  - *Por qué*: Si alguien intenta realizar peticiones `curl` o llamadas directas a la API sin pasar por la interfaz, el servidor las rechazará con `HTTP 401 Unauthorized` o `HTTP 403 Forbidden`, protegiendo la cuota de la API en Google AI Studio.
+1. **Entrada del Audio (2 caminos)**:
+   - **Desde WhatsApp (Android)**: Mantienes pulsada la nota de voz en WhatsApp $\rightarrow$ tocas **Compartir** $\rightarrow$ eliges **Mywhis**. La aplicación se abre y procesa el audio automáticamente sin tocar nada más.
+   - **Desde dentro de Mywhis**: Pulsas el nuevo botón **"Audio WhatsApp / Subir"** situado en la barra de controles de grabación (junto a *IA Audio*) y seleccionas el archivo de audio.
+2. **Transcripción + Propuesta de Respuesta Simultánea**:
+   - Aparece un indicador de progreso ágil (*"Transcribiendo nota de voz de WhatsApp y preparando respuesta..."*).
+3. **Panel Superior de "Mensaje Recibido" + Editor de Respuesta Inferior**:
+   - **Arriba (Contexto del audio recibido)**: Se despliega una tarjeta compacta con el texto íntegro de lo que te acaban de decir en el audio, un mini-reproductor para escuchar el audio original si lo necesitas, un botón para copiar el mensaje recibido y un botón para cerrar la tarjeta cuando termines.
+   - **Abajo (Tu contestación)**: En el editor principal aparece lista la **respuesta sugerida por la IA** (que puedes enviar tal cual, refinar con los 6 botones inferiores o **reemplazar/ampliar pulsando el micrófono** para dictar tu propia respuesta mientras lees arriba lo que te preguntaron).
+4. **Envío directo a WhatsApp**:
+   - Al pulsar **Compartir** o el botón rápido **Responder en WhatsApp**, se abre WhatsApp con tu texto de respuesta listo para enviarlo al contacto.
+
+### Identidad Visual, Ergonomía Táctil y Tema
+
+- **Dirección Estética**: Utilitaria de alta precisión en modo oscuro profundo (`#090d16`), conservando intacta la vista sin scroll (*Zero-Scroll*) y la botonera de 6 acciones que ya utilizas.
+- **Paleta y Acentos Semánticos**:
+  - Superficie base: `#090d16` y contenedores en `slate-900/70` con bordes sutiles `border-slate-800/90`.
+  - Tarjeta de audio de WhatsApp recibido: acento esmeralda sutil (`emerald-500/15`, borde `border-emerald-500/30` y texto `emerald-300`) para distinguir de un vistazo el **mensaje entrante** frente a **tu respuesta** en el editor (`indigo-500`).
+- **Ergonomía Móvil y Zonas de Pulgar**:
+  - Todos los botones interactivos mantienen un área táctil mínima de $44 \times 44\text{px}$.
+  - La tarjeta superior de *"Mensaje recibido"* tiene altura máxima controlada (`max-h-32 overflow-y-auto`) y opción de plegar/desplegar con un toque para no restar espacio al editor principal en pantallas móviles verticales.
 
 ---
 
-### 4. Technical Architecture & Data Strategy
+## 3. Key Product Decisions & Trade-Offs
+
+- **Decisión 1: Recepción directa mediante Web Share Target + Cola en Memoria/IndexedDB del Service Worker**
+  - *Enfoque elegido*: Registrar `share_target` con método `POST` y `multipart/form-data` en el manifiesto PWA, aceptando `audio/*`, `.opus`, `.ogg`, `.mp3`, `.m4a`, `.wav` y `.aac`. El Service Worker intercepta el archivo enviado por WhatsApp, lo guarda temporalmente en caché local y redirige a `/?shared_audio=1`, donde la interfaz lo recoge y transcribe al instante.
+  - *Por qué*: Es el estándar oficial de Android/Chromium para que una aplicación web instalada aparezca en la hoja nativa de "Compartir" de WhatsApp cuando seleccionas un mensaje de voz.
+  - *Alternativa descartada*: Subida exclusiva por selector de archivos; obligaría al usuario a guardar primero el audio de WhatsApp en la carpeta de descargas del teléfono antes de poder abrirlo.
+
+- **Decisión 2: Normalización de MIME Types de WhatsApp (`audio/ogg; codecs=opus` y `audio/opus`)**
+  - *Enfoque elegido*: WhatsApp codifica sus notas de voz en formato `.opus` / `.ogg`. El backend limpiará y normalizará automáticamente las cabeceras MIME (`audio/ogg`, `audio/opus`, `audio/mp4`, `audio/mpeg`, `audio/webm`) antes de pasarlas a Gemini para asegurar compatibilidad total con notas de voz de Android y iOS.
+  - *Por qué*: Algunos navegadores móviles reportan los archivos `.opus` de WhatsApp como `application/octet-stream` o `audio/ogg; codecs=opus`, lo que provocaría rechazos si no se normaliza por extensión y cabecera.
+
+- **Decisión 3: Una sola llamada ultrarrápida o pipeline paralelo para Transcripción + Respuesta Sugerida**
+  - *Enfoque elegido*: Al subir o compartir un audio de WhatsApp, el endpoint dedicado devuelve en un único flujo tanto la **transcripción literal (`incomingTranscript`)** como la **respuesta sugerida (`suggestedReply`)**, además de permitir regenerar la respuesta o dictar encima con el micrófono.
+  - *Por qué*: Reduce la latencia total a la mitad y evita hacer esperar dos veces al usuario.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### Diagrama de Arquitectura y Flujo de Datos
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                       VozIA Studio                           │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │                     Lock Screen                        │  │
-│  │  - Google Identity Services (GSI)                      │  │
-│  │  - Email validation: cesar626313978@gmail.com           │  │
-│  │  - PIN de respaldo opcional                            │  │
-│  └──────────────────────────┬─────────────────────────────┘  │
-│                             │ (Token validado)               │
-│                             ▼                                │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │               Main App (Desbloqueada)                  │  │
-│  │  - Dictado continuo (30-40 min)                        │  │
-│  │  - Editor de texto + Selector Original / IA            │  │
-│  │  - Header con Avatar de César + Botón "Cerrar sesión"  │  │
-│  └──────────────────────────┬─────────────────────────────┘  │
-└─────────────────────────────┼────────────────────────────────┘
-                              │
-                     Bearer Token en Headers
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    Express Backend (server.ts)               │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │ Middleware de Autorización:                            │  │
-│  │ - Extrae y valida JWT / email del usuario             │  │
-│  │ - Rechaza con 401 si email != cesar626313978@gmail.com │  │
-│  └──────────────────────────┬─────────────────────────────┘  │
-│                             │ (Permitido)                    │
-│                             ▼                                │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │ Endpoints protegidos:                                  │  │
-│  │ - POST /api/improve    --> Gemini 2.5 Flash            │  │
-│  │ - POST /api/transcribe --> Gemini Multimodal Audio     │  │
-│  └────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                     ENTRADA DE AUDIO DE WHATSAPP                         │
+│                                                                          │
+│  [WhatsApp Android -> "Compartir"]          [Botón "Audio WhatsApp"]     │
+│                 │                                      │                 │
+│                 ▼                                      ▼                 │
+│   ┌───────────────────────────┐          ┌───────────────────────────┐   │
+│   │ PWA Web Share Target POST │          │ Selector Nativo de Archivo│   │
+│   │ (Service Worker Cache)    │          │ (.opus, .ogg, .m4a, .mp3) │   │
+│   └─────────────┬─────────────┘          └─────────────┬─────────────┘   │
+└─────────────────┼──────────────────────────────────────┼─────────────────┘
+                  └──────────────────┬───────────────────┘
+                                     ▼
+            ┌────────────────────────────────────────────────┐
+            │     Manejador de Audio Recibido (Frontend)     │
+            │  • Normaliza MIME (.opus/.ogg -> audio/ogg)    │
+            │  • Crea URL local para mini-reproductor        │
+            └────────────────────────┬───────────────────────┘
+                                     ▼
+            ┌────────────────────────────────────────────────┐
+            │     POST /api/whatsapp-audio (Backend)         │
+            │  1. Transcribe el audio con fidelidad          │
+            │  2. Genera borrador de respuesta contextual    │
+            └────────────────────────┬───────────────────────┘
+                                     │
+         ┌───────────────────────────┴───────────────────────────┐
+         ▼                                                       ▼
+┌─────────────────────────────────────┐ ┌──────────────────────────────────┐
+│ TARJETA SUPERIOR: MENSAJE RECIBIDO  │ │ EDITOR PRINCIPAL: TU RESPUESTA   │
+│ • Texto transcrito del contacto     │ │ • Borrador IA listo para editar  │
+│ • Mini-reproductor de audio         │ │ • O pulsa el Micrófono para      │
+│ • Plegable / Copiar / Cerrar        │ │   dictar tu propia respuesta     │
+│                                     │ │   viendo el mensaje arriba       │
+└─────────────────────────────────────┘ └────────────────┬─────────────────┘
+                                                         ▼
+                                        ┌──────────────────────────────────┐
+                                        │  Acción: Compartir / Enviar a    │
+                                        │  WhatsApp o Aplicar 6 Botones IA │
+                                        └──────────────────────────────────┘
 ```
 
-- **Manejo de Estado**:
-  - `isAuthenticated`: Booleano que controla si se muestra la pantalla de bloqueo o el estudio de voz.
-  - `currentUser`: Objeto con `{ email, name, picture }` cargado desde `localStorage` al iniciar.
-  - `logout()`: Función que limpia la sesión y vuelve a la pantalla de bloqueo inmediatamente.
+### Modelo de Estado en la Interfaz
+
+- `incomingWhatsAppAudio`: Estado que almacena el mensaje recibido actual:
+  - `transcript`: Texto transcrito de la nota de voz que te enviaron.
+  - `audioUrl`: URL local (`URL.createObjectURL`) para poder reproducir el audio original desde la tarjeta superior si quieres comprobar un dato.
+  - `fileName`: Nombre del archivo o etiqueta `"Nota de voz de WhatsApp"`.
+  - `isCollapsed`: Booleano para contraer o expandir la tarjeta superior en pantallas pequeñas.
+- Sincronización con el Editor Principal:
+  - Cuando llega un audio de WhatsApp, `incomingWhatsAppAudio.transcript` se muestra en la tarjeta superior, mientras que la **respuesta sugerida por la IA** se carga en la vista de respuesta del editor principal.
+  - Si decides pulsar el **Micrófono** para dictar tu propia contestación con tu voz, la tarjeta superior permanece visible para que puedas leer punto por punto lo que te dijeron mientras hablas.

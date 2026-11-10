@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic, Square, Play, Pause, Sparkles, Mail, Share2, Cpu, Copy, Trash2,
   Settings, Check, Volume2, RotateCcw, Loader2, Save, ShieldCheck, LogOut,
-  ShoppingCart, Languages
+  ShoppingCart, Languages, MessageCircle, Upload, ChevronDown, ChevronUp, X, Download
 } from 'lucide-react';
 import { LockScreen, AuthUser } from './components/LockScreen';
 
@@ -25,6 +25,14 @@ const PROMPT_META = {
   shopping_list: { label: 'Lista Compra', shortDesc: 'Lista con guiones', icon: ShoppingCart, color: 'from-amber-500 to-orange-600', border: 'border-amber-500/70 hover:border-amber-400' },
   translate: { label: 'Traducir ES ⇄ EN', shortDesc: 'Español ⇄ Inglés', icon: Languages, color: 'from-cyan-500 to-teal-600', border: 'border-cyan-500/70 hover:border-cyan-400' }
 };
+
+export interface IncomingWhatsAppMessage {
+  transcript: string;
+  suggestedReply: string;
+  audioUrl?: string;
+  fileName: string;
+  collapsed: boolean;
+}
 
 export default function App() {
   // Autenticación exclusiva para el propietario
@@ -55,6 +63,15 @@ export default function App() {
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const [backupAudioBlob, setBackupAudioBlob] = useState<Blob | null>(null);
   const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+
+  // Estado para Notas de Voz recibidas de WhatsApp (Compartir directo o botón Subir Audio)
+  const [incomingWhatsApp, setIncomingWhatsApp] = useState<IncomingWhatsAppMessage | null>(null);
+  const [isProcessingWhatsApp, setIsProcessingWhatsApp] = useState(false);
+  const whatsAppFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Estado de instalación PWA (necesario para aparecer en el menú "Compartir" nativo de WhatsApp en Android)
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
+  const [isStandalonePWA, setIsStandalonePWA] = useState(false);
 
   // Prompts y borrador de configuración
   const [prompts, setPrompts] = useState<Record<string, string>>(() => {
@@ -696,6 +713,175 @@ export default function App() {
     }
   };
 
+  // Procesador central de notas de voz de WhatsApp (tanto por Compartir de Android como por botón Subir Audio)
+  const processWhatsAppAudioBase64 = async (
+    audioBase64: string,
+    mimeType: string,
+    fileName: string,
+    audioUrl?: string
+  ) => {
+    setIsProcessingWhatsApp(true);
+    showToast('Transcribiendo audio de WhatsApp y generando respuesta...', 'info');
+
+    try {
+      const res = await fetch('/api/whatsapp-audio', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentUser?.token || 'cesar-vozia-master-pass-2026'}`,
+          'X-User-Email': currentUser?.email || AUTHORIZED_EMAIL,
+        },
+        body: JSON.stringify({
+          audioBase64,
+          mimeType,
+          fileName,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.transcript) {
+        throw new Error(data.error || 'No se pudo transcribir la nota de voz');
+      }
+
+      setIncomingWhatsApp({
+        transcript: data.transcript,
+        suggestedReply: data.suggestedReply || '',
+        audioUrl,
+        fileName: data.fileName || fileName || 'Nota de voz de WhatsApp',
+        collapsed: false,
+      });
+
+      if (data.suggestedReply) {
+        updateRawText(data.suggestedReply);
+        updateTransformedText('');
+        updateActiveView('raw');
+      }
+
+      showToast('¡Audio de WhatsApp transcrito y respuesta lista!');
+    } catch (err: any) {
+      showToast(err?.message || 'Error al procesar el audio de WhatsApp.', 'error');
+    } finally {
+      setIsProcessingWhatsApp(false);
+    }
+  };
+
+  // Selección manual de archivo de audio de WhatsApp (.opus, .ogg, .m4a, .mp3, .wav, .aac)
+  const handleWhatsAppFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    try {
+      const audioUrl = URL.createObjectURL(file);
+      const reader = new FileReader();
+      const base64Audio: string = await new Promise((resolve, reject) => {
+        reader.onloadend = () => {
+          const resStr = reader.result as string;
+          resolve(resStr.includes(',') ? resStr.split(',')[1] : resStr);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      await processWhatsAppAudioBase64(
+        base64Audio,
+        file.type || 'audio/ogg',
+        file.name || 'Audio-WhatsApp.opus',
+        audioUrl
+      );
+    } catch {
+      showToast('No se pudo leer el archivo de audio seleccionado.', 'error');
+    }
+  };
+
+  // Regenerar una nueva propuesta de respuesta con IA para el mensaje de WhatsApp recibido
+  const handleRegenerateWhatsAppReply = async () => {
+    if (!incomingWhatsApp?.transcript || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/improve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${currentUser?.token || 'cesar-vozia-master-pass-2026'}`,
+          'X-User-Email': currentUser?.email || AUTHORIZED_EMAIL,
+        },
+        body: JSON.stringify({
+          text: incomingWhatsApp.transcript,
+          mode: 'whatsapp_reply',
+          customPrompt: `Actúa como el usuario que recibió este mensaje de voz por WhatsApp. Redacta una respuesta alternativa clara, natural, cordial y directa para contestar por WhatsApp a todos los puntos mencionados en el mensaje. Devuelve únicamente el texto de la respuesta lista para enviar.`,
+          requestNonce: Date.now(),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const reply = (data.result || data.text || '').trim();
+        if (reply) {
+          updateRawText(reply);
+          updateTransformedText('');
+          updateActiveView('raw');
+          showToast('¡Nueva respuesta sugerida generada!');
+        }
+      }
+    } catch {
+      showToast('Error al regenerar respuesta.', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Detector de audio compartido desde WhatsApp en Android (Web Share Target ?shared_audio=1) y PWA Install
+  useEffect(() => {
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true;
+    setIsStandalonePWA(isStandalone);
+
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+
+    // Comprobar si la app se abrió al compartir un audio desde WhatsApp
+    const checkSharedWhatsAppAudio = async () => {
+      try {
+        const res = await fetch('/api/shared-audio/latest');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.found && data?.audioBase64) {
+          if (window.location.search.includes('shared_audio')) {
+            window.history.replaceState({}, '', '/');
+          }
+          // Crear Blob local reproducible a partir del base64 recibido
+          let audioUrl: string | undefined;
+          try {
+            const byteChars = atob(data.audioBase64);
+            const byteNumbers = new Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) {
+              byteNumbers[i] = byteChars.charCodeAt(i);
+            }
+            const blob = new Blob([new Uint8Array(byteNumbers)], { type: data.mimeType || 'audio/ogg' });
+            audioUrl = URL.createObjectURL(blob);
+          } catch {}
+
+          await processWhatsAppAudioBase64(
+            data.audioBase64,
+            data.mimeType || 'audio/ogg',
+            data.fileName || 'Nota de voz de WhatsApp',
+            audioUrl
+          );
+        }
+      } catch {}
+    };
+
+    checkSharedWhatsAppAudio();
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+    };
+  }, []);
+
   // Transformación ultrarrápida (~650ms) con bloqueo de concurrencia, validación anti-eco y reintento silencioso
   const handleTransform = async (modeKey: string) => {
     if (isProcessing) return;
@@ -816,6 +1002,15 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] max-h-[100dvh] bg-[#090d16] text-slate-100 flex flex-col font-sans overflow-hidden select-none">
+      {/* Input oculto para subir audios de WhatsApp (.opus, .ogg, .mp3, .m4a, .wav, .aac) */}
+      <input
+        ref={whatsAppFileInputRef}
+        type="file"
+        accept="audio/*,.opus,.ogg,.mp3,.m4a,.wav,.aac,.amr,.webm"
+        onChange={handleWhatsAppFileChange}
+        className="hidden"
+      />
+
       {toast && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-3.5 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs font-medium shadow-2xl flex items-center gap-1.5 animate-in fade-in duration-150">
           <Check className="w-3.5 h-3.5 text-emerald-400" />
@@ -839,6 +1034,28 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Botón Instalar App (para activar Compartir directo desde WhatsApp en Android) */}
+            {deferredInstallPrompt && !isStandalonePWA && (
+              <button
+                onClick={async () => {
+                  try {
+                    await deferredInstallPrompt.prompt();
+                    const choice = await deferredInstallPrompt.userChoice;
+                    if (choice.outcome === 'accepted') {
+                      setDeferredInstallPrompt(null);
+                      setIsStandalonePWA(true);
+                      showToast('¡App instalada! Ya puedes compartir audios desde WhatsApp.');
+                    }
+                  } catch {}
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/40 text-xs font-semibold transition-all cursor-pointer"
+                title="Instalar en el teléfono para compartir directo desde WhatsApp"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="hidden md:inline">Instalar</span>
+              </button>
+            )}
+
             {/* Chip de usuario autenticado (César) */}
             <div 
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-[11px] sm:text-xs"
@@ -847,10 +1064,9 @@ export default function App() {
               <div className="w-4 h-4 rounded-full bg-indigo-500/30 text-indigo-300 font-bold flex items-center justify-center text-[9px] border border-indigo-500/40">
                 C
               </div>
-              <span className="text-slate-300 font-medium max-w-[110px] truncate">
+              <span className="text-slate-300 font-medium max-w-[90px] sm:max-w-[110px] truncate">
                 {currentUser.email.split('@')[0]}
               </span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
             </div>
 
             <button
@@ -888,9 +1104,9 @@ export default function App() {
 
       {/* CONTENIDO PRINCIPAL ADAPTADO (ZERO SCROLL) */}
       <main className="flex-1 min-h-0 max-w-6xl w-full mx-auto p-2 sm:p-3 flex flex-col gap-2 overflow-hidden">
-        {/* PANEL DE CONTROL DE GRABACIÓN */}
-        <section className="bg-slate-900/60 border border-slate-800/90 rounded-2xl p-2.5 sm:p-3 shrink-0 flex items-center justify-between gap-3 shadow-sm">
-          <div className="flex items-center gap-3 min-w-0">
+        {/* PANEL DE CONTROL DE GRABACIÓN + BOTÓN SUBIR AUDIO WHATSAPP */}
+        <section className="bg-slate-900/60 border border-slate-800/90 rounded-2xl p-2.5 sm:p-3 shrink-0 flex items-center justify-between gap-2 sm:gap-3 shadow-sm">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
             {!isRecording ? (
               <button
                 type="button"
@@ -943,41 +1159,160 @@ export default function App() {
                 )}
                 <span className="text-xs sm:text-sm font-bold text-white truncate">
                   {!isRecording
-                    ? 'Pulsa el micro para dictar'
+                    ? incomingWhatsApp
+                      ? 'Dicta tu respuesta o edita abajo'
+                      : 'Pulsa el micro para dictar'
                     : isPaused
                     ? 'Pausado (pulsa play para reanudar)'
                     : 'Grabando dictado...'}
                 </span>
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className={`font-mono text-xs sm:text-sm font-bold ${isPaused ? 'text-amber-400' : 'text-indigo-400'}`}>
+                <span className={`font-mono tabular-nums text-xs sm:text-sm font-bold ${isPaused ? 'text-amber-400' : 'text-indigo-400'}`}>
                   {formatTime(elapsedSeconds)}
                 </span>
-                <span className="text-[11px] sm:text-xs text-slate-400">{wordCount} pal.</span>
+                <span className="text-[11px] sm:text-xs text-slate-400 tabular-nums">{wordCount} pal.</span>
                 {isPaused && (
-                  <span className="text-[9px] bg-amber-500/15 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30">
-                    En Pausa
+                  <span className="text-[10px] text-amber-300 font-medium">
+                    · En Pausa
                   </span>
                 )}
                 {wakeLockActive && (
-                  <span className="hidden xs:inline text-[9px] bg-emerald-500/10 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/30">
-                    Pantalla ON
+                  <span className="hidden xs:inline text-[10px] text-emerald-300 font-medium">
+                    · Pantalla ON
                   </span>
                 )}
               </div>
             </div>
           </div>
 
-          <button
-            onClick={() => transcribeBackupAudio()}
-            disabled={isTranscribingAudio}
-            className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer shrink-0 transition-all shadow-sm"
-            title="Transcribir audio grabado con IA"
-          >
-            {isTranscribingAudio ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Volume2 className="w-3.5 h-3.5" />}
-            <span>IA Audio</span>
-          </button>
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Botón para subir o abrir Nota de Voz de WhatsApp */}
+            <button
+              type="button"
+              onClick={() => whatsAppFileInputRef.current?.click()}
+              disabled={isProcessingWhatsApp}
+              className="px-2.5 sm:px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/50 text-emerald-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer shrink-0 transition-all shadow-sm active:scale-95 whitespace-nowrap"
+              title="Subir o transcribir un audio de WhatsApp (.opus, .ogg, .m4a, .mp3)"
+            >
+              {isProcessingWhatsApp ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-300" />
+              ) : (
+                <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span>Audio WhatsApp</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => transcribeBackupAudio()}
+              disabled={isTranscribingAudio}
+              className="px-2.5 sm:px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer shrink-0 transition-all shadow-sm whitespace-nowrap"
+              title="Transcribir audio grabado con IA"
+            >
+              {isTranscribingAudio ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Volume2 className="w-3.5 h-3.5" />}
+              <span className="hidden xs:inline">IA Audio</span>
+            </button>
+          </div>
         </section>
+
+        {/* TARJETA SUPERIOR DE CONTEXTO: MENSAJE DE AUDIO RECIBIDO DE WHATSAPP */}
+        {incomingWhatsApp && (
+          <section className="bg-emerald-950/25 border border-emerald-500/40 rounded-2xl p-2.5 sm:p-3 shrink-0 flex flex-col gap-2 shadow-md">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <MessageCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-xs sm:text-sm font-bold text-emerald-200 truncate">
+                  Mensaje recibido de WhatsApp
+                </span>
+                <span className="text-[11px] text-emerald-400/80 hidden sm:inline truncate">
+                  · {incomingWhatsApp.fileName}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateRawText('');
+                    updateTransformedText('');
+                    updateActiveView('raw');
+                    if (!isRecording) {
+                      startRecording();
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all whitespace-nowrap"
+                  title="Borrar borrador y dictar mi propia respuesta viendo este mensaje arriba"
+                >
+                  <Mic className="w-3 h-3" />
+                  <span>Dictar respuesta</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRegenerateWhatsAppReply}
+                  disabled={isProcessing}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all whitespace-nowrap"
+                  title="Generar otra propuesta de respuesta automática con IA"
+                >
+                  <Sparkles className="w-3 h-3 text-emerald-300" />
+                  <span className="hidden xs:inline">Otra respuesta IA</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(incomingWhatsApp.transcript);
+                    showToast('Transcripción del audio recibido copiada');
+                  }}
+                  className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                  title="Copiar transcripción recibida"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setIncomingWhatsApp((prev) => (prev ? { ...prev, collapsed: !prev.collapsed } : null))
+                  }
+                  className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                  title={incomingWhatsApp.collapsed ? 'Mostrar mensaje recibido' : 'Plegar mensaje recibido'}
+                >
+                  {incomingWhatsApp.collapsed ? (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIncomingWhatsApp(null)}
+                  className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 cursor-pointer"
+                  title="Cerrar mensaje recibido"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {!incomingWhatsApp.collapsed && (
+              <div className="flex flex-col gap-2">
+                <div className="max-h-24 sm:max-h-28 overflow-y-auto rounded-xl bg-slate-950/70 border border-emerald-500/20 p-2.5 text-xs sm:text-sm text-slate-100 leading-relaxed select-text">
+                  {incomingWhatsApp.transcript}
+                </div>
+                {incomingWhatsApp.audioUrl && (
+                  <audio
+                    controls
+                    src={incomingWhatsApp.audioUrl}
+                    className="h-7 w-full max-w-sm opacity-90"
+                  />
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ÁREA DE TEXTO CON CONTENEDOR CENTRAL EXACTO A LA IMAGEN */}
         <section className="flex-1 min-h-0 flex flex-col bg-slate-900/70 border border-slate-800/90 rounded-2xl overflow-hidden shadow-inner">
@@ -991,7 +1326,7 @@ export default function App() {
                   activeView === 'raw' ? 'bg-slate-800 text-white border border-slate-700/60' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                Dictado en Bruto (Raw)
+                {incomingWhatsApp ? 'Tu Respuesta (Editable)' : 'Dictado en Bruto (Raw)'}
               </button>
               {transformedText && (
                 <button
@@ -1024,13 +1359,23 @@ export default function App() {
                 <p className="text-sm font-semibold text-white">Transcribiendo audio con IA...</p>
               </div>
             )}
+            {isProcessingWhatsApp && (
+              <div className="absolute inset-0 z-20 bg-[#070b14]/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+                <p className="text-sm font-semibold text-white">Transcribiendo nota de voz de WhatsApp y preparando respuesta...</p>
+              </div>
+            )}
             <textarea
               value={currentDisplayedText}
               onChange={(e) => {
                 if (activeView === 'transformed') updateTransformedText(e.target.value);
                 else updateRawText(e.target.value);
               }}
-              placeholder="Habla por el micrófono o escribe aquí..."
+              placeholder={
+                incomingWhatsApp
+                  ? 'Aquí tienes la respuesta sugerida. Puedes editarla o pulsar el micrófono para dictar tu propia contestación...'
+                  : 'Habla por el micrófono, escribe aquí o sube un audio de WhatsApp...'
+              }
               className="w-full h-full flex-1 p-3 sm:p-4 bg-transparent text-slate-100 placeholder-slate-500 text-sm sm:text-base leading-relaxed resize-none focus:outline-none"
             />
           </div>
@@ -1050,10 +1395,10 @@ export default function App() {
                   }
                 }}
                 disabled={!currentDisplayedText.trim()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold cursor-pointer transition-all active:scale-95"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold cursor-pointer transition-all active:scale-95 whitespace-nowrap"
               >
                 <Share2 className="w-3.5 h-3.5" />
-                <span>Compartir</span>
+                <span>{incomingWhatsApp ? 'Responder / Compartir' : 'Compartir'}</span>
               </button>
               <button
                 type="button"
@@ -1063,7 +1408,7 @@ export default function App() {
                   showToast('¡Copiado al portapapeles!');
                 }}
                 disabled={!currentDisplayedText.trim()}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-100 text-xs font-semibold border border-slate-700 cursor-pointer transition-all active:scale-95"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-100 text-xs font-semibold border border-slate-700 cursor-pointer transition-all active:scale-95 whitespace-nowrap"
               >
                 <Copy className="w-3.5 h-3.5" />
                 <span>Copiar</span>
@@ -1079,10 +1424,11 @@ export default function App() {
                   setTimeout(() => setConfirmClear(false), 3000);
                   return;
                 }
+                setIncomingWhatsApp(null);
                 handleFullReset();
               }}
-              disabled={!rawText && !transformedText && !backupAudioBlob && !isRecording}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold border cursor-pointer transition-all active:scale-95 ${
+              disabled={!rawText && !transformedText && !backupAudioBlob && !isRecording && !incomingWhatsApp}
+              className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-semibold border cursor-pointer transition-all active:scale-95 whitespace-nowrap ${
                 confirmClear
                   ? 'bg-red-600 text-white border-red-500 animate-pulse'
                   : 'bg-slate-900 hover:bg-red-950/40 text-slate-400 hover:text-red-300 border-slate-800'

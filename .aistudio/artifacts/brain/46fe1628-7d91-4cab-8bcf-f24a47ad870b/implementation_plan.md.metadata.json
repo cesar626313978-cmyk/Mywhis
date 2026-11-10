@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan de implementación para blindar VozIA Studio mediante autenticación con Google (Gmail) y control de acceso exclusivo para cesar626313978@gmail.com. Incluye pantalla de bloqueo de acceso privado, persistencia de sesión en el navegador, validación de credenciales en el cliente y en los endpoints del servidor para proteger las cuotas de Gemini.",
-  "updatedAt":  "2026-10-22T10:30:18.048561391Z",
+  "summary":  "Plan de implementación para recibir notas de voz de WhatsApp en Mywhis (mediante Compartir directo en Android PWA Share Target y botón Subir Audio), transcribirlas automáticamente con IA, mostrar el mensaje recibido en un panel superior de contexto, generar una propuesta de respuesta inteligente y permitir dictar o editar la contestación para enviarla de vuelta a WhatsApp.",
+  "updatedAt":  "2026-11-10T17:12:03.824254557Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

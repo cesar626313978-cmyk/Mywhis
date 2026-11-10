@@ -285,6 +285,204 @@ async function startServer() {
     }
   });
 
+  // Normalizador de MIME types para notas de voz de WhatsApp (.opus, .ogg, .m4a, .mp3, .amr, .aac)
+  function normalizeAudioMimeType(rawMime?: string, fileName?: string): string {
+    const lowerName = (fileName || "").toLowerCase().trim();
+    const baseMime = (rawMime || "").split(";")[0].toLowerCase().trim();
+
+    if (lowerName.endsWith(".opus") || lowerName.endsWith(".ogg") || baseMime.includes("opus") || baseMime.includes("ogg")) {
+      return "audio/ogg";
+    }
+    if (lowerName.endsWith(".m4a") || lowerName.endsWith(".mp4") || baseMime === "audio/x-m4a" || baseMime === "audio/m4a") {
+      return "audio/mp4";
+    }
+    if (lowerName.endsWith(".mp3") || baseMime === "audio/mp3" || baseMime === "audio/mpeg") {
+      return "audio/mpeg";
+    }
+    if (lowerName.endsWith(".wav") || baseMime.includes("wav")) {
+      return "audio/wav";
+    }
+    if (lowerName.endsWith(".aac") || baseMime.includes("aac")) {
+      return "audio/aac";
+    }
+    if (lowerName.endsWith(".amr") || baseMime.includes("amr")) {
+      return "audio/amr";
+    }
+    if (!baseMime || baseMime === "application/octet-stream") {
+      return "audio/ogg";
+    }
+    return baseMime;
+  }
+
+  // Almacén temporal en memoria para el audio compartido directamente desde WhatsApp en Android (Web Share Target)
+  let latestSharedWhatsAppAudio: {
+    audioBase64: string;
+    mimeType: string;
+    fileName: string;
+    receivedAt: number;
+  } | null = null;
+
+  // Receptor nativo Web Share Target (POST /api/share-target multipart/form-data desde WhatsApp Android)
+  app.post(
+    "/api/share-target",
+    express.raw({ type: () => true, limit: "60mb" }),
+    (req, res) => {
+      try {
+        const contentType = req.headers["content-type"] || "";
+        const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+        const bodyBuf: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || "");
+
+        if (boundaryMatch && bodyBuf.length > 0) {
+          const boundary = `--${boundaryMatch[1] || boundaryMatch[2]}`;
+          const latin1Body = bodyBuf.toString("latin1");
+          const parts = latin1Body.split(boundary);
+
+          for (const part of parts) {
+            if (part.includes("Content-Disposition") && (part.includes('name="audio"') || part.includes("filename="))) {
+              const headerEndIndex = part.indexOf("\r\n\r\n");
+              if (headerEndIndex !== -1) {
+                const headerSection = part.slice(0, headerEndIndex);
+                let fileContentLatin1 = part.slice(headerEndIndex + 4);
+                if (fileContentLatin1.endsWith("\r\n")) {
+                  fileContentLatin1 = fileContentLatin1.slice(0, -2);
+                }
+
+                const fnMatch = headerSection.match(/filename="([^"]+)"/i);
+                const ctMatch = headerSection.match(/Content-Type:\s*([^\r\n]+)/i);
+                const fileName = fnMatch ? fnMatch[1] : "Audio-WhatsApp.opus";
+                const rawMime = ctMatch ? ctMatch[1].trim() : "audio/ogg";
+                const fileBuffer = Buffer.from(fileContentLatin1, "latin1");
+
+                if (fileBuffer.length > 0) {
+                  latestSharedWhatsAppAudio = {
+                    audioBase64: fileBuffer.toString("base64"),
+                    mimeType: normalizeAudioMimeType(rawMime, fileName),
+                    fileName,
+                    receivedAt: Date.now(),
+                  };
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[share-target] Error al procesar audio compartido desde WhatsApp:", err);
+      }
+
+      return res.redirect(303, "/?shared_audio=1");
+    }
+  );
+
+  // Endpoint para que el frontend recoja el audio recién compartido desde WhatsApp
+  app.get("/api/shared-audio/latest", (_req, res) => {
+    if (!latestSharedWhatsAppAudio || Date.now() - latestSharedWhatsAppAudio.receivedAt > 5 * 60 * 1000) {
+      latestSharedWhatsAppAudio = null;
+      return res.json({ found: false });
+    }
+    const payload = latestSharedWhatsAppAudio;
+    latestSharedWhatsAppAudio = null;
+    return res.json({
+      found: true,
+      ...payload,
+    });
+  });
+
+  // Pipeline unificado para Notas de Voz de WhatsApp: Transcripción + Propuesta de Respuesta con IA
+  app.post("/api/whatsapp-audio", async (req, res) => {
+    const auth = verifyUserAuth(req);
+    if (!auth.authorized) {
+      return res.status(401).json({
+        error: auth.error || "Acceso no autorizado",
+        unauthorized: true,
+      });
+    }
+
+    try {
+      const { audioBase64, mimeType, fileName } = req.body || {};
+      if (!audioBase64) {
+        return res.status(400).json({ error: "No se recibió el archivo de audio de WhatsApp." });
+      }
+
+      const client = createGenAIClient(false);
+      if (!client) {
+        return res.status(503).json({ error: "GEMINI_API_KEY no configurada en el servidor." });
+      }
+
+      const normalizedMime = normalizeAudioMimeType(mimeType, fileName);
+      const audioPart = {
+        inlineData: {
+          mimeType: normalizedMime,
+          data: audioBase64,
+        },
+      };
+
+      const transcribePrompt = `Transcribe con total fidelidad, claridad y puntuación correcta esta nota de voz recibida por WhatsApp.
+REGLAS:
+1. Conserva todos los detalles, preguntas, nombres, fechas o recados que menciona la persona.
+2. Añade signos de puntuación (comas, puntos, ¿?, ¡!) para que sea cómodo de leer de un vistazo.
+3. Devuelve ÚNICAMENTE el texto transcrito del audio, sin introducciones ni comillas.`;
+
+      const modelsToTry = ["gemini-3.5-transcribe", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
+      let transcript = "";
+
+      for (const modelName of modelsToTry) {
+        try {
+          const response = await client.models.generateContent({
+            model: modelName,
+            contents: [{ role: "user", parts: [audioPart, { text: transcribePrompt }] }],
+          });
+          if (response?.text && response.text.trim()) {
+            transcript = response.text.trim();
+            break;
+          }
+        } catch (err: any) {
+          console.warn(`[whatsapp-audio] Modelo ${modelName} falló:`, err?.message?.slice(0, 120));
+        }
+      }
+
+      if (!transcript) {
+        return res.status(502).json({
+          error: "No se pudo transcribir la nota de voz. Verifica que el archivo contenga voz audible.",
+        });
+      }
+
+      // Generar respuesta sugerida automática con IA (~500ms con gemini-3.1-flash-lite y thinkingBudget: 0)
+      let suggestedReply = "";
+      try {
+        const replyRes = await client.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: `Mensaje de voz recibido por WhatsApp:\n"""\n${transcript}\n"""`,
+          config: {
+            systemInstruction: `Actúa como el usuario que acaba de recibir este mensaje de voz por WhatsApp.
+Redacta una respuesta directa, natural, cercana y bien estructurada lista para enviar por WhatsApp contestando a todos los puntos o preguntas del mensaje recibido.
+REGLAS:
+1. Responde en el mismo idioma del mensaje recibido (por defecto español).
+2. Usa un tono natural de WhatsApp (claro, educado y directo, sin sonar robótico).
+3. Devuelve ÚNICAMENTE el texto de la respuesta sugerida, sin comillas ni explicaciones previas.`,
+            temperature: 0.45,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
+        });
+        suggestedReply = (replyRes?.text || "").trim();
+      } catch (replyErr: any) {
+        console.warn("[whatsapp-audio] Error generando respuesta sugerida:", replyErr?.message);
+      }
+
+      return res.json({
+        transcript,
+        suggestedReply,
+        fileName: fileName || "Nota de voz de WhatsApp",
+        mimeType: normalizedMime,
+      });
+    } catch (error: any) {
+      console.error("Error in /api/whatsapp-audio:", error);
+      return res.status(500).json({
+        error: error?.message || "Error al procesar el audio de WhatsApp.",
+      });
+    }
+  });
+
   // Audio transcription API endpoint
   app.post("/api/transcribe", async (req, res) => {
     const auth = verifyUserAuth(req);
@@ -296,7 +494,7 @@ async function startServer() {
     }
 
     try {
-      const { audioBase64, mimeType, mode, liveTranscript } = req.body || {};
+      const { audioBase64, mimeType, fileName, mode, liveTranscript } = req.body || {};
       const fallbackText = (liveTranscript || "").trim();
 
       if (!audioBase64) {
@@ -308,7 +506,7 @@ async function startServer() {
         return res.json({ text: fallbackText });
       }
 
-      const cleanMimeType = (mimeType || "audio/webm").split(";")[0];
+      const cleanMimeType = normalizeAudioMimeType(mimeType, fileName);
 
       const audioPart = {
         inlineData: {

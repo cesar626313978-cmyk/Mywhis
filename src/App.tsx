@@ -5,22 +5,48 @@ import {
   ShoppingCart, Languages, MessageCircle, Upload, ChevronDown, ChevronUp, X, Download
 } from 'lucide-react';
 import { LockScreen, AuthUser } from './components/LockScreen';
+import { DEFAULT_SOCIAL_X_PROMPT, DEFAULT_SOCIAL_INSTAGRAM_PROMPT } from './data/defaultPrompt';
 
 const AUTHORIZED_EMAIL = 'cesar626313978@gmail.com';
 
 const DEFAULT_PROMPTS = {
-  improve: `Actúa como un editor ejecutivo senior experto en español. Reescribe y eleva profesionalmente el siguiente texto dictado por voz: corrige gramática y puntuación, elimina muletillas o repeticiones del habla y reestructura las oraciones para lograr máxima claridad, fluidez e impacto profesional. PROHIBIDO devolver el mismo texto literal de entrada (prohibido hacer eco). Devuelve únicamente el texto final mejorado, sin introducciones ni explicaciones.`,
-  email: `Actúa como un director de comunicación y redactor ejecutivo senior. Tu tarea es transformar el siguiente texto dictado por voz en un correo electrónico profesional, estructurado, claro y persuasivo. Incluye una línea de "Asunto:" atractiva, un saludo formal, el cuerpo limpio en párrafos y una despedida cordial. Devuelve únicamente el correo listo para enviar.`,
-  social: `Actúa como un experto en marketing digital y copywriting. Transforma el siguiente texto dictado en una publicación magnética para redes sociales (LinkedIn, X o Instagram). Empieza con un gancho potente, párrafos cortos y escaneables, emojis estratégicos, llamada a la acción (CTA) y 3-5 hashtags relevantes. Devuelve solo la publicación lista para copiar.`,
-  ai_prompt: `Actúa como un Ingeniero de Prompts Senior. Convierte la siguiente idea o petición dictada por voz en un prompt maestro, profesional y estructurado usando secciones claras: [Rol], [Contexto], [Tarea Principal], [Restricciones] y [Formato de Salida]. Devuelve únicamente el prompt optimizado listo para usar.`,
-  shopping_list: `Actúa como un asistente organizador de compras de supermercado. Extrae todos los productos o artículos mencionados en el dictado, elimina conectores hablados o muletillas ("también", "y luego", "ah y", "un poco de", "hay que comprar", "apunta") y genera una lista limpia y ordenada.\nREGLAS ESTRICTAS DE FORMATO:\n1. La primera línea debe ser exactamente el título:\nLista de la compra:\n2. Debajo del título, escribe cada artículo en un renglón independiente precedido por un guion y un espacio ("- "), comenzando con letra mayúscula (conservando las cantidades si se mencionaron, ej. "- Leche entera", "- 2 docenas de huevos", "- Pan de molde").\n3. Devuelve ÚNICAMENTE la lista con ese formato exacto, sin saludos, sin despedidas ni notas adicionales.`,
-  translate: `Actúa como un traductor profesional bilingüe nativo (Español ⇄ Inglés). Analiza automáticamente el idioma del texto dictado y aplica la traducción en sentido inverso:\n1. Si el texto está en ESPAÑOL: tradúcelo al INGLÉS con fluidez natural, gramática impecable y precisión contextual.\n2. Si el texto está en INGLÉS: tradúcelo al ESPAÑOL con fluidez natural, gramática impecable y precisión contextual.\n3. Devuelve ÚNICAMENTE el texto traducido en el idioma de destino, sin introducciones, sin comillas y sin notas explicativas.`
+  improve: `Actúa como un editor ejecutivo senior bilingüe (Español / Inglés). Reescribe y eleva profesionalmente el siguiente texto: corrige gramática y puntuación, elimina muletillas o repeticiones del habla y reestructura las oraciones para lograr máxima claridad, fluidez e impacto profesional. REGLA DE IDIOMA: Mantén estrictamente el mismo idioma del texto de entrada (si está en inglés, responde 100% en inglés; si está en español, responde 100% en español), salvo que el selector de idioma indique lo contrario. PROHIBIDO devolver el mismo texto literal de entrada. Devuelve únicamente el texto final mejorado.`,
+  email: `Actúa como un director de comunicación y redactor ejecutivo senior bilingüe. Transforma el siguiente texto en un correo electrónico profesional, estructurado, claro y persuasivo. REGLA DE IDIOMA: Mantén estrictamente el idioma activo del texto (en inglés usa "Subject:" y redacta 100% en inglés; en español usa "Asunto:" y redacta 100% en español). Devuelve únicamente el correo listo para enviar.`,
+  social: DEFAULT_SOCIAL_X_PROMPT,
+  social_x: DEFAULT_SOCIAL_X_PROMPT,
+  social_instagram: DEFAULT_SOCIAL_INSTAGRAM_PROMPT,
+  ai_prompt: `Actúa como un Ingeniero de Prompts Senior bilingüe (Español / Inglés). Convierte la siguiente idea o petición en un prompt maestro, profesional y estructurado.\nREGLA CRÍTICA DE COHERENCIA LINGÜÍSTICA:\n- Si el texto de entrada está en INGLÉS (o el idioma activo es inglés), redacta TODO el prompt en INGLÉS usando estas secciones exactas: [Role], [Context], [Main Task], [Constraints], [Output Format].\n- Si el texto de entrada está en ESPAÑOL (o el idioma activo es español), redacta TODO el prompt en ESPAÑOL usando estas secciones exactas: [Rol], [Contexto], [Tarea Principal], [Restricciones], [Formato de Salida].\nDevuelve únicamente el prompt optimizado listo para usar.`,
+  shopping_list: `Actúa como un asistente organizador de compras de supermercado bilingüe. Extrae todos los productos o artículos mencionados, elimina conectores hablados o muletillas y genera una lista limpia y ordenada.\nREGLAS ESTRICTAS DE FORMATO E IDIOMA:\n1. Si el texto está en INGLÉS: primera línea "Shopping List:" seguida de cada artículo con "- ".\n2. Si el texto está en ESPAÑOL: primera línea "Lista de la compra:" seguida de cada artículo con "- ".\n3. Devuelve ÚNICAMENTE la lista con ese formato exacto, sin saludos ni notas adicionales.`,
+  translate: `Actúa como un traductor profesional bilingüe nativo (Español ⇄ Inglés). Analiza automáticamente el idioma del texto de entrada y aplica la traducción en sentido inverso:\n1. Si el texto está en ESPAÑOL: tradúcelo al INGLÉS con fluidez natural, gramática impecable y precisión contextual.\n2. Si el texto está en INGLÉS: tradúcelo al ESPAÑOL con fluidez natural, gramática impecable y precisión contextual.\n3. Devuelve ÚNICAMENTE el texto traducido en el idioma de destino, sin introducciones, sin comillas y sin notas explicativas.`
 };
+
+// Detector heurístico instantáneo en cliente para coherencia de estado entre Traducir -> Prompt IA
+function detectClientLanguage(text: string): 'es' | 'en' {
+  const clean = text.trim();
+  if (!clean) return 'es';
+  const sample = ` ${clean.toLowerCase()} `;
+  const enMatches = (
+    sample.match(
+      /\b(the|and|for|with|that|this|have|from|will|would|could|should|about|please|need|want|make|create|write|act|role|context|task|constraints|output|format|hello|tomorrow|meeting|morning|project|shopping|list|app|application|system|user|data|design)\b/g
+    ) || []
+  ).length;
+  const esMatches = (
+    sample.match(
+      /\b(el|la|los|las|de|del|que|en|un|una|para|con|por|como|más|pero|sus|este|esta|estos|hola|mañana|reunión|proyecto|quiero|necesito|actúa|rol|contexto|tarea|restricciones|formato|compra|lista|aplicación|sistema|usuario|datos|diseño)\b/g
+    ) || []
+  ).length;
+  const hasSpanishChars = /[áéíóúñ¿¡]/i.test(clean);
+  if (enMatches > esMatches && !hasSpanishChars) return 'en';
+  if (enMatches >= esMatches + 2) return 'en';
+  return 'es';
+}
 
 const PROMPT_META = {
   improve: { label: 'Mejorar Texto', shortDesc: 'Gramática y fluidez', icon: Sparkles, color: 'from-indigo-500 to-violet-600', border: 'border-indigo-500/70 hover:border-indigo-400' },
   email: { label: 'Correo Electrónico', shortDesc: 'Asunto + formal', icon: Mail, color: 'from-sky-500 to-blue-600', border: 'border-sky-500/70 hover:border-sky-400' },
-  social: { label: 'Redes Sociales', shortDesc: 'Gancho y hashtags', icon: Share2, color: 'from-pink-500 to-rose-600', border: 'border-pink-500/70 hover:border-pink-400' },
+  social: { label: 'Redes Sociales', shortDesc: 'X e Instagram', icon: Share2, color: 'from-pink-500 to-rose-600', border: 'border-pink-500/70 hover:border-pink-400' },
+  social_x: { label: 'Post para X (Twitter)', shortDesc: 'AudioCar Pro · X (<280c)', icon: Share2, color: 'from-slate-600 to-slate-800', border: 'border-slate-500/70 hover:border-slate-400' },
+  social_instagram: { label: 'Post para Instagram', shortDesc: 'AudioCar Pro · IG Visual', icon: Share2, color: 'from-pink-500 to-amber-500', border: 'border-pink-500/70 hover:border-pink-400' },
   ai_prompt: { label: 'Prompt para IA', shortDesc: 'Estructura experta', icon: Cpu, color: 'from-emerald-500 to-teal-600', border: 'border-emerald-500/70 hover:border-emerald-400' },
   shopping_list: { label: 'Lista Compra', shortDesc: 'Lista con guiones', icon: ShoppingCart, color: 'from-amber-500 to-orange-600', border: 'border-amber-500/70 hover:border-amber-400' },
   translate: { label: 'Traducir ES ⇄ EN', shortDesc: 'Español ⇄ Inglés', icon: Languages, color: 'from-cyan-500 to-teal-600', border: 'border-cyan-500/70 hover:border-cyan-400' }
@@ -73,10 +99,25 @@ export default function App() {
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
   const [isStandalonePWA, setIsStandalonePWA] = useState(false);
 
-  // Prompts y borrador de configuración
+  // Estado persistente de idioma ('auto' detecta dinámicamente el idioma del texto activo; 'es' o 'en' lo fijan manualmente)
+  const [languagePreference, setLanguagePreference] = useState<'auto' | 'es' | 'en'>(() => {
+    const saved = localStorage.getItem('mywhis_language_pref');
+    return saved === 'es' || saved === 'en' || saved === 'auto' ? saved : 'auto';
+  });
+  const languagePreferenceRef = useRef<'auto' | 'es' | 'en'>(languagePreference);
+
+  const updateLanguagePreference = (nextPref: 'auto' | 'es' | 'en') => {
+    languagePreferenceRef.current = nextPref;
+    setLanguagePreference(nextPref);
+    try {
+      localStorage.setItem('mywhis_language_pref', nextPref);
+    } catch {}
+  };
+
+  // Prompts y borrador de configuración (v5 con X e Instagram para AudioCar Pro)
   const [prompts, setPrompts] = useState<Record<string, string>>(() => {
     try {
-      const saved = localStorage.getItem('mywhis_custom_prompts_v3') || localStorage.getItem('vozia_custom_prompts_v3');
+      const saved = localStorage.getItem('mywhis_custom_prompts_v5');
       return saved ? { ...DEFAULT_PROMPTS, ...JSON.parse(saved) } : DEFAULT_PROMPTS;
     } catch {
       return DEFAULT_PROMPTS;
@@ -85,6 +126,19 @@ export default function App() {
   const [tempPrompts, setTempPrompts] = useState(prompts);
   const [showSettings, setShowSettings] = useState(false);
   const [activePromptTab, setActivePromptTab] = useState<keyof typeof DEFAULT_PROMPTS>('improve');
+  const [showSocialMenu, setShowSocialMenu] = useState(false);
+  const socialMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!showSocialMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (socialMenuRef.current && !socialMenuRef.current.contains(e.target as Node)) {
+        setShowSocialMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showSocialMenu]);
 
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -683,8 +737,8 @@ export default function App() {
       }
       setPrompts(DEFAULT_PROMPTS);
       setTempPrompts(DEFAULT_PROMPTS);
-      localStorage.setItem('mywhis_custom_prompts_v3', JSON.stringify(DEFAULT_PROMPTS));
-      localStorage.setItem('vozia_custom_prompts_v3', JSON.stringify(DEFAULT_PROMPTS));
+      updateLanguagePreference('auto');
+      localStorage.setItem('mywhis_custom_prompts_v5', JSON.stringify(DEFAULT_PROMPTS));
 
       if ('serviceWorker' in navigator) {
         const registrations = await navigator.serviceWorker.getRegistrations();
@@ -882,24 +936,43 @@ export default function App() {
     };
   }, []);
 
-  // Transformación ultrarrápida (~650ms) con bloqueo de concurrencia, validación anti-eco y reintento silencioso
+  // Transformación ultrarrápida (~650ms) con persistencia de idioma, encadenamiento de vista activa y anti-eco
   const handleTransform = async (modeKey: string) => {
     if (isProcessing) return;
 
-    // Prioriza siempre el dictado original (rawText) como fuente canónica para evitar encadenar ecos previos
+    // Si el usuario está viendo un resultado transformado (ej. acaba de traducir a inglés con "Traducir ES ⇄ EN"),
+    // operamos sobre ese texto activo en pantalla en lugar de revertir al dictado original en español (rawText).
     const rawCandidate = (rawTextRef.current + ' ' + interimTextRef.current).trim();
-    const sourceText = rawCandidate || transformedTextRef.current.trim();
+    const sourceText =
+      activeViewRef.current === 'transformed' && transformedTextRef.current.trim()
+        ? transformedTextRef.current.trim()
+        : rawCandidate || transformedTextRef.current.trim();
 
     if (!sourceText) {
       showToast('Primero dicta o escribe algún texto.', 'error');
       return;
     }
 
+    // Resolución de idioma persistente:
+    // - Si es 'translate', invierte el idioma del texto actual.
+    // - Si el usuario fijó 'es' o 'en' en el selector, fuerza ese idioma.
+    // - Si está en 'auto', conserva el idioma detectado en sourceText (ej. inglés tras traducir).
+    const detectedSourceLang = detectClientLanguage(sourceText);
+    const effectiveTargetLang: 'auto' | 'es' | 'en' =
+      modeKey === 'translate'
+        ? detectedSourceLang === 'es'
+          ? 'en'
+          : 'es'
+        : languagePreferenceRef.current === 'auto'
+        ? detectedSourceLang
+        : languagePreferenceRef.current;
+
     setIsProcessing(true);
     setActiveMode(modeKey);
 
     try {
       let result = '';
+      let serverResolvedLang: 'es' | 'en' | undefined;
       const maxAttempts = 2;
 
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -919,6 +992,7 @@ export default function App() {
               text: sourceText,
               mode: modeKey,
               improveType: modeKey,
+              targetLanguage: effectiveTargetLang,
               prompt: prompts[modeKey] || DEFAULT_PROMPTS[modeKey as keyof typeof DEFAULT_PROMPTS],
               customPrompt: prompts[modeKey] || DEFAULT_PROMPTS[modeKey as keyof typeof DEFAULT_PROMPTS],
               requestNonce: Date.now()
@@ -932,6 +1006,9 @@ export default function App() {
             const candidate = (data.result || data.text || '').trim();
             if (candidate) {
               result = candidate;
+              if (data.resolvedLanguage === 'en' || data.resolvedLanguage === 'es') {
+                serverResolvedLang = data.resolvedLanguage;
+              }
               break;
             }
           }
@@ -947,10 +1024,18 @@ export default function App() {
 
       if (!result) throw new Error('Respuesta vacía');
 
+      // Si el usuario tenía fijado manualmente un idioma ('es' o 'en') y pulsa "Traducir ES ⇄ EN",
+      // sincronizamos el selector al nuevo idioma traducido para no bloquear el siguiente botón.
+      if (modeKey === 'translate' && languagePreferenceRef.current !== 'auto') {
+        const nextLang = serverResolvedLang || detectClientLanguage(result);
+        updateLanguagePreference(nextLang);
+      }
+
       updateTransformedText(result);
       updateActiveView('transformed');
+      const finalLang = serverResolvedLang || detectClientLanguage(result);
       const label = PROMPT_META[modeKey as keyof typeof PROMPT_META]?.label || modeKey;
-      showToast(`¡Listo: ${label}!`);
+      showToast(`¡Listo: ${label} (${finalLang.toUpperCase()})!`);
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         showToast('La IA ha tardado demasiado. Vuelve a pulsar el botón.', 'error');
@@ -964,8 +1049,7 @@ export default function App() {
 
   const handleSaveSettings = () => {
     setPrompts(tempPrompts);
-    localStorage.setItem('mywhis_custom_prompts_v3', JSON.stringify(tempPrompts));
-    localStorage.setItem('vozia_custom_prompts_v3', JSON.stringify(tempPrompts));
+    localStorage.setItem('mywhis_custom_prompts_v5', JSON.stringify(tempPrompts));
     setShowSettings(false);
     showToast('¡Ajustes y prompts guardados correctamente!');
   };
@@ -974,6 +1058,10 @@ export default function App() {
     activeView === 'transformed'
       ? transformedText
       : rawText + (interimText ? (rawText ? ' ' : '') + interimText : '');
+
+  const detectedActiveLang = detectClientLanguage(currentDisplayedText);
+  const effectiveActiveLang: 'es' | 'en' =
+    languagePreference === 'auto' ? detectedActiveLang : languagePreference;
 
   const wordCount = currentDisplayedText.trim() ? currentDisplayedText.trim().split(/\s+/).length : 0;
 
@@ -1316,13 +1404,13 @@ export default function App() {
 
         {/* ÁREA DE TEXTO CON CONTENEDOR CENTRAL EXACTO A LA IMAGEN */}
         <section className="flex-1 min-h-0 flex flex-col bg-slate-900/70 border border-slate-800/90 rounded-2xl overflow-hidden shadow-inner">
-          {/* Pestañas de vista rápida */}
-          <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-800/80 bg-slate-950/40 shrink-0">
-            <div className="flex items-center gap-1.5">
+          {/* Pestañas de vista rápida + Selector explícito de Idioma (Auto / ES / EN) */}
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-slate-800/80 bg-slate-950/40 shrink-0">
+            <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto">
               <button
                 type="button"
                 onClick={() => updateActiveView('raw')}
-                className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                className={`px-2.5 sm:px-3 py-1 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                   activeView === 'raw' ? 'bg-slate-800 text-white border border-slate-700/60' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
@@ -1332,7 +1420,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => updateActiveView('transformed')}
-                  className={`px-3 py-1 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  className={`px-2.5 sm:px-3 py-1 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                     activeView === 'transformed'
                       ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
                       : 'text-slate-400 hover:text-slate-200'
@@ -1342,7 +1430,42 @@ export default function App() {
                 </button>
               )}
             </div>
-            <span className="text-[11px] text-slate-400 font-medium">Editable</span>
+
+            {/* Selector de Idioma Persistente (Auto detecta idioma del texto en pantalla; ES/EN fuerzan idioma) */}
+            <div
+              className="flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-xl p-0.5 shrink-0"
+              title="Idioma de salida para Prompts y transformaciones (Auto respeta el idioma actual del texto)"
+            >
+              <Languages className="w-3.5 h-3.5 text-cyan-400 ml-1.5 hidden xs:inline" />
+              {(['auto', 'es', 'en'] as const).map((langOpt) => {
+                const isSelected = languagePreference === langOpt;
+                const label =
+                  langOpt === 'auto'
+                    ? `Auto (${effectiveActiveLang.toUpperCase()})`
+                    : langOpt.toUpperCase();
+                return (
+                  <button
+                    key={langOpt}
+                    type="button"
+                    onClick={() => {
+                      updateLanguagePreference(langOpt);
+                      const msg =
+                        langOpt === 'auto'
+                          ? `Idioma automático (${detectedActiveLang.toUpperCase()} detectado)`
+                          : `Idioma fijado en ${langOpt === 'en' ? 'Inglés (EN)' : 'Español (ES)'}`;
+                      showToast(msg);
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-500/40 shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Textarea contenedor con overlay central exactamente igual a la imagen */}
@@ -1441,18 +1564,114 @@ export default function App() {
           </div>
         </section>
 
-        {/* LOS 6 BOTONES DE TRANSFORMACIÓN RÁPIDA */}
+        {/* LOS 6 BOTONES DE TRANSFORMACIÓN RÁPIDA (CON DESPLEGABLE HACIA ARRIBA EN REDES SOCIALES) */}
         <section className="shrink-0 pt-0.5">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
             {(['improve', 'email', 'social', 'ai_prompt', 'shopping_list', 'translate'] as const).map((key) => {
               const meta = PROMPT_META[key];
               const IconComponent = meta.icon;
-              const isThisActive = isProcessing && activeMode === key;
+              const isThisActive =
+                isProcessing &&
+                (activeMode === key ||
+                  (key === 'social' && (activeMode === 'social_x' || activeMode === 'social_instagram')));
+
+              if (key === 'social') {
+                return (
+                  <div key={key} ref={socialMenuRef} className="relative">
+                    {/* Desplegable hacia arriba para elegir X (Twitter) o Instagram */}
+                    {showSocialMenu && (
+                      <div className="absolute bottom-full left-0 right-0 sm:min-w-[230px] mb-2 z-40 bg-slate-900/95 backdrop-blur-xl border border-pink-500/50 rounded-2xl p-1.5 shadow-2xl shadow-black/80 flex flex-col gap-1 animate-in fade-in slide-in-from-bottom-2 duration-150">
+                        <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800/80 flex items-center justify-between">
+                          <span>Elegir Red Social</span>
+                          <span className="text-pink-400">AudioCar Pro</span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenu(false);
+                            handleTransform('social_x');
+                          }}
+                          className="w-full px-2.5 py-2 rounded-xl bg-slate-950/70 hover:bg-slate-800 border border-slate-800 hover:border-slate-600 flex items-center gap-2.5 text-left transition-all cursor-pointer active:scale-95"
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-black border border-slate-700 flex items-center justify-center text-white font-black text-xs shrink-0">
+                            𝕏
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-white leading-tight truncate">
+                              X (Twitter)
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              Post directo &lt;280c · 2 opciones
+                            </div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSocialMenu(false);
+                            handleTransform('social_instagram');
+                          }}
+                          className="w-full px-2.5 py-2 rounded-xl bg-slate-950/70 hover:bg-slate-800 border border-slate-800 hover:border-pink-500/50 flex items-center gap-2.5 text-left transition-all cursor-pointer active:scale-95"
+                        >
+                          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 via-pink-500 to-purple-600 flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm">
+                            IG
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-bold text-white leading-tight truncate">
+                              Instagram
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">
+                              Post / Reel visual · 2 opciones
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => setShowSocialMenu((prev) => !prev)}
+                      disabled={isProcessing}
+                      className={`w-full p-2 sm:p-2.5 rounded-2xl bg-[#0b1120] hover:bg-slate-800/80 border ${
+                        showSocialMenu ? 'border-pink-400 ring-1 ring-pink-500/40 bg-slate-800/90' : meta.border
+                      } flex items-center justify-between gap-1.5 transition-all active:scale-95 cursor-pointer shadow-sm select-none touch-manipulation`}
+                    >
+                      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+                        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-gradient-to-br ${meta.color} flex items-center justify-center text-white shrink-0 shadow-sm`}>
+                          {isThisActive ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-white" />
+                          ) : (
+                            <IconComponent className="w-4 h-4" />
+                          )}
+                        </div>
+                        <span className="text-xs sm:text-sm font-bold text-white tracking-tight truncate">
+                          {activeMode === 'social_x'
+                            ? 'Redes (X)'
+                            : activeMode === 'social_instagram'
+                            ? 'Redes (IG)'
+                            : meta.label}
+                        </span>
+                      </div>
+                      <ChevronUp
+                        className={`w-3.5 h-3.5 text-pink-400 shrink-0 transition-transform duration-150 ${
+                          showSocialMenu ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+                  </div>
+                );
+              }
+
               return (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => handleTransform(key)}
+                  onClick={() => {
+                    setShowSocialMenu(false);
+                    handleTransform(key);
+                  }}
                   disabled={isProcessing}
                   className={`p-2 sm:p-2.5 rounded-2xl bg-[#0b1120] hover:bg-slate-800/80 border ${
                     meta.border
@@ -1501,9 +1720,9 @@ export default function App() {
               </div>
             </div>
 
-            {/* Pestañas de los 6 Prompts (para no hacer scroll en el móvil) */}
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 p-2 bg-slate-950/60 border-b border-slate-800 shrink-0">
-              {(['improve', 'email', 'social', 'ai_prompt', 'shopping_list', 'translate'] as const).map((key) => {
+            {/* Pestañas de los Prompts (incluyendo X e Instagram separados) */}
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-1 p-2 bg-slate-950/60 border-b border-slate-800 shrink-0">
+              {(['improve', 'email', 'social_x', 'social_instagram', 'ai_prompt', 'shopping_list', 'translate'] as const).map((key) => {
                 const isSelected = activePromptTab === key;
                 return (
                   <button
@@ -1518,7 +1737,8 @@ export default function App() {
                   >
                     {key === 'improve' && '✨ Mejorar'}
                     {key === 'email' && '✉️ Correo'}
-                    {key === 'social' && '📱 Redes'}
+                    {key === 'social_x' && '𝕏 Post X'}
+                    {key === 'social_instagram' && '📸 Insta'}
                     {key === 'ai_prompt' && '🤖 Prompt'}
                     {key === 'shopping_list' && '🛒 Compra'}
                     {key === 'translate' && '🌐 Traducir'}
@@ -1564,7 +1784,7 @@ export default function App() {
                   onClick={() => setTempPrompts(DEFAULT_PROMPTS)}
                   className="text-indigo-400 hover:underline cursor-pointer"
                 >
-                  Restaurar los 6
+                  Restaurar todos
                 </button>
               </div>
             </div>

@@ -3,6 +3,8 @@ import {
   DEFAULT_GENERAL_PROMPT, 
   DEFAULT_EMAIL_PROMPT, 
   DEFAULT_SOCIAL_PROMPT, 
+  DEFAULT_SOCIAL_X_PROMPT,
+  DEFAULT_SOCIAL_INSTAGRAM_PROMPT,
   DEFAULT_PROMPT_BUILDER_PROMPT,
   DEFAULT_SHOPPING_LIST_PROMPT,
   DEFAULT_TRANSLATE_PROMPT
@@ -35,6 +37,7 @@ export default async function handler(req: any, res: any) {
   const mode = req.body?.mode;
   const improveType = req.body?.improveType || req.body?.option;
   const customPrompt = (req.body?.customPrompt || "").trim();
+  const targetLanguage = req.body?.targetLanguage || "auto";
 
   try {
     if (!rawText) {
@@ -52,24 +55,42 @@ export default async function handler(req: any, res: any) {
     }
 
     const isConversation = mode === 'conversation' || rawText.includes("Persona 1:") || rawText.includes("Persona 2:");
+    const langRule =
+      improveType === 'translate'
+        ? ''
+        : targetLanguage === 'en'
+        ? '\nCRITICAL LANGUAGE RULE: Output MUST be 100% in ENGLISH ([Role], [Context], [Main Task], [Constraints], [Output Format] if generating a prompt).'
+        : targetLanguage === 'es'
+        ? '\nREGLA CRÍTICA DE IDIOMA: La salida DEBE estar 100% en ESPAÑOL ([Rol], [Contexto], [Tarea Principal], [Restricciones], [Formato de Salida] si es un prompt).'
+        : '';
 
     let prompt = "";
     if (customPrompt) {
-      if (customPrompt.includes("{TEXTO}") || customPrompt.includes("{texto}")) {
-        prompt = customPrompt.replace(/\{TEXTO\}|\{texto\}/g, rawText);
+      if (
+        customPrompt.includes("{TEXTO}") ||
+        customPrompt.includes("{texto}") ||
+        /\{\{\s*texto_dictado\s*\}\}/i.test(customPrompt)
+      ) {
+        prompt = `${customPrompt
+          .replace(/\{\{\s*texto_dictado\s*\}\}/gi, rawText)
+          .replace(/\{TEXTO\}|\{texto\}/g, rawText)}${langRule}`;
       } else {
-        prompt = `${customPrompt}\n\nTexto a mejorar:\n"""${rawText}"""`;
+        prompt = `${customPrompt}${langRule}\n\nInput text:\n"""${rawText}"""`;
       }
     } else if (improveType === 'email') {
-      prompt = `${DEFAULT_EMAIL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+      prompt = `${DEFAULT_EMAIL_PROMPT}${langRule}\n\nInput text:\n"""${rawText}"""`;
+    } else if (improveType === 'social_x') {
+      prompt = `${DEFAULT_SOCIAL_X_PROMPT.replace(/\{\{\s*texto_dictado\s*\}\}/gi, rawText)}${langRule}`;
+    } else if (improveType === 'social_instagram') {
+      prompt = `${DEFAULT_SOCIAL_INSTAGRAM_PROMPT.replace(/\{\{\s*texto_dictado\s*\}\}/gi, rawText)}${langRule}`;
     } else if (improveType === 'social') {
-      prompt = `${DEFAULT_SOCIAL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+      prompt = `${DEFAULT_SOCIAL_PROMPT.replace(/\{\{\s*texto_dictado\s*\}\}/gi, rawText)}${langRule}\n\nInput text:\n"""${rawText}"""`;
     } else if (improveType === 'prompt' || improveType === 'ai_prompt') {
-      prompt = `${DEFAULT_PROMPT_BUILDER_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+      prompt = `${DEFAULT_PROMPT_BUILDER_PROMPT}${langRule}\n\nInput text:\n"""${rawText}"""`;
     } else if (improveType === 'shopping_list') {
-      prompt = `${DEFAULT_SHOPPING_LIST_PROMPT}\n\nTexto a procesar:\n"""${rawText}"""`;
+      prompt = `${DEFAULT_SHOPPING_LIST_PROMPT}${langRule}\n\nInput text:\n"""${rawText}"""`;
     } else if (improveType === 'translate') {
-      prompt = `${DEFAULT_TRANSLATE_PROMPT}\n\nTexto a traducir:\n"""${rawText}"""`;
+      prompt = `${DEFAULT_TRANSLATE_PROMPT}\n\nInput text:\n"""${rawText}"""`;
     } else {
       prompt = isConversation
         ? `Eres el redactor experto de Mywhis para conversaciones.
@@ -86,20 +107,16 @@ Persona 2: [frase mejorada]
 
 Texto a mejorar:
 """${rawText}"""`
-        : `${DEFAULT_GENERAL_PROMPT}\n\nTexto a mejorar:\n"""${rawText}"""`;
+        : `${DEFAULT_GENERAL_PROMPT}${langRule}\n\nInput text:\n"""${rawText}"""`;
     }
 
     let improved = "";
     let lastError = "";
 
-    // 1. Intento principal con SDK oficial (soporta tanto claves AIza como Vertex AI AQ. del proyecto mywish-512809)
+    // 1. Intento principal con SDK oficial
     try {
-      const isVertexKey = apiKey.startsWith("AQ.");
-      const ai = new GoogleGenAI({
-        apiKey,
-        ...(isVertexKey ? { vertexai: true } : {}),
-      });
-      const modelsToTry = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"];
+      const ai = new GoogleGenAI({ apiKey });
+      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"];
       for (const modelName of modelsToTry) {
         try {
           const response = await ai.models.generateContent({

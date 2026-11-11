@@ -8,6 +8,8 @@ import {
   DEFAULT_GENERAL_PROMPT,
   DEFAULT_EMAIL_PROMPT,
   DEFAULT_SOCIAL_PROMPT,
+  DEFAULT_SOCIAL_X_PROMPT,
+  DEFAULT_SOCIAL_INSTAGRAM_PROMPT,
   DEFAULT_PROMPT_BUILDER_PROMPT,
   DEFAULT_SHOPPING_LIST_PROMPT,
   DEFAULT_TRANSLATE_PROMPT,
@@ -69,11 +71,38 @@ function isEchoOfInput(input: string, output: string): boolean {
   return false;
 }
 
+// Detector heurístico rápido de idioma (Español vs Inglés) para mantener coherencia de estado entre botones
+function detectLanguageFromText(text: string): "en" | "es" {
+  const sample = ` ${text.toLowerCase()} `;
+  // Indicadores léxicos y morfológicos frecuentes
+  const enMatches = (
+    sample.match(
+      /\b(the|and|for|with|that|this|have|from|will|would|could|should|about|please|need|want|make|create|write|act|role|context|task|constraints|output|format|hello|tomorrow|meeting|morning|project|shopping|list)\b/g
+    ) || []
+  ).length;
+  const esMatches = (
+    sample.match(
+      /\b(el|la|los|las|de|del|que|en|un|una|para|con|por|como|más|pero|sus|este|esta|estos|hola|mañana|reunión|proyecto|quiero|necesito|actúa|rol|contexto|tarea|restricciones|formato|compra|lista)\b/g
+    ) || []
+  ).length;
+  const hasSpanishChars = /[áéíóúñ¿¡]/i.test(text);
+
+  if (enMatches > esMatches && !hasSpanishChars) {
+    return "en";
+  }
+  if (enMatches >= esMatches + 2) {
+    return "en";
+  }
+  return "es";
+}
+
 function buildSystemInstruction(
   modeKey?: string,
   customPrompt?: string,
   isConversation?: boolean,
-  forceRewrite = false
+  forceRewrite = false,
+  effectiveLang: "es" | "en" = "es",
+  rawText = ""
 ): string {
   let baseInstruction = "";
 
@@ -81,6 +110,10 @@ function buildSystemInstruction(
     baseInstruction = customPrompt.trim();
   } else if (modeKey === "email") {
     baseInstruction = DEFAULT_EMAIL_PROMPT;
+  } else if (modeKey === "social_x") {
+    baseInstruction = DEFAULT_SOCIAL_X_PROMPT;
+  } else if (modeKey === "social_instagram") {
+    baseInstruction = DEFAULT_SOCIAL_INSTAGRAM_PROMPT;
   } else if (modeKey === "social") {
     baseInstruction = DEFAULT_SOCIAL_PROMPT;
   } else if (modeKey === "prompt" || modeKey === "ai_prompt") {
@@ -96,44 +129,98 @@ Pule el siguiente diálogo para dejarlo impecable, perfectamente redactado y lis
     baseInstruction = DEFAULT_GENERAL_PROMPT;
   }
 
+  // Reemplazar marcadores dinámicos {{texto_dictado}} o {TEXTO} si están presentes en el prompt
+  if (rawText) {
+    baseInstruction = baseInstruction
+      .replace(/\{\{\s*texto_dictado\s*\}\}/gi, rawText)
+      .replace(/\{TEXTO\}|\{texto\}/g, rawText);
+  }
+
+  // Si NO es el botón de traducción inversa automática, forzamos la coherencia estricta del idioma activo
+  const isTranslateMode = modeKey === "translate";
+  const isSocialDualOption =
+    modeKey === "social_x" ||
+    modeKey === "social_instagram" ||
+    modeKey === "social" ||
+    /Opci[oó]n\s*1/i.test(baseInstruction);
+
+  const languageDirective = isTranslateMode
+    ? ""
+    : effectiveLang === "en"
+    ? `\nCRITICAL LANGUAGE RULE (ENGLISH LOCKED):
+- The current active language is ENGLISH ("en").
+- Even if previous instructions or custom prompt templates above are written in Spanish, you MUST generate the ENTIRE output strictly in ENGLISH.
+- NEVER revert to Spanish.
+- If generating an AI Prompt (mode "ai_prompt" or "prompt"), use English section headers: [Role], [Context], [Main Task], [Constraints], [Output Format].
+- If generating a Shopping List (mode "shopping_list"), start with "Shopping List:" followed by "- Item" in English.
+- If generating an Email (mode "email"), use "Subject:" and write the entire email in English.`
+    : `\nREGLA CRÍTICA DE IDIOMA (ESPAÑOL ACTIVO):
+- El idioma activo actual es ESPAÑOL ("es").
+- Debes generar TODA la respuesta íntegramente en ESPAÑOL.
+- Si estás generando un Prompt para IA, usa las secciones: [Rol], [Contexto], [Tarea Principal], [Restricciones], [Formato de Salida].`;
+
   const antiEchoRules = `
 REGLAS ESTRICTAS DE EJECUCIÓN Y ANTI-ECO:
-1. PROHIBIDO HACER ECO DEL INPUT: Bajo ninguna circunstancia devuelvas el mismo texto literal de entrada solo con puntos o comas. Debes transformar, elevar el vocabulario, estructurar y mejorar activamente la redacción para que el cambio sea evidente y profesional desde el primer intento.
-2. SALIDA DIRECTA Y ÚNICA: Devuelve ÚNICAMENTE el texto final transformado. Prohibido incluir introducciones ("Aquí tienes...", "Opción 1:"), listas de opciones o notas explicativas.${
+1. PROHIBIDO HACER ECO DEL INPUT: Bajo ninguna circunstancia devuelvas el mismo texto literal de entrada solo con puntos o comas. Debes transformar, elevar el vocabulario, estructurar y mejorar activamente la redacción.
+2. ${
+    isSocialDualOption
+      ? "FORMATO DE OPCIONES: Respeta estrictamente el formato de salida requerido (incluyendo Opción 1 y Opción 2 listas para copiar), sin saludos iniciales ni notas finales fuera del formato."
+      : "SALIDA DIRECTA Y ÚNICA: Devuelve ÚNICAMENTE el texto final transformado. Prohibido incluir introducciones, listas de opciones o notas explicativas."
+  }${
     forceRewrite
       ? "\n3. REESCRITURA OBLIGATORIA: Tu intento previo fue demasiado similar al original. Reestructura completamente las frases con un registro ejecutivo, fluido y pulido."
       : ""
   }`;
 
-  return `${baseInstruction}\n${antiEchoRules}`;
+  return `${baseInstruction}\n${languageDirective}\n${antiEchoRules}`;
 }
 
 async function generateTransformFast(
   rawText: string,
   modeKey?: string,
   customPrompt?: string,
-  isConversation?: boolean
+  isConversation?: boolean,
+  targetLanguage: "auto" | "es" | "en" = "auto"
 ): Promise<{
   text: string;
   modelUsed: string;
   latencyMs: number;
+  resolvedLanguage: "es" | "en";
 }> {
   const t0 = Date.now();
-  // Priorizamos siempre el cliente estándar (vertexai=false) que opera en ~650ms con el proxy de AI Studio
   const client = createGenAIClient(false);
   if (!client) {
     throw new Error("GEMINI_API_KEY no configurada en el servidor.");
   }
 
-  // gemini-3.1-flash-lite con thinkingBudget: 0 ofrece ~650ms de latencia y alta fiabilidad al primer toque
+  const inputLang = detectLanguageFromText(rawText);
+  let resolvedLanguage: "es" | "en" =
+    targetLanguage === "en" || targetLanguage === "es" ? targetLanguage : inputLang;
+
+  // En modo traducción (ES ⇄ EN), el idioma resultante siempre invierte el idioma del texto de entrada
+  if (modeKey === "translate") {
+    resolvedLanguage = inputLang === "es" ? "en" : "es";
+  }
+
   const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"];
 
   for (const modelName of modelsToTry) {
-    // Hasta 2 pasadas silenciosas: si la 1ª devuelve eco del texto original, fuerza reescritura con mayor temperatura
     for (let attempt = 0; attempt < 2; attempt++) {
       const forceRewrite = attempt > 0;
-      const systemInstruction = buildSystemInstruction(modeKey, customPrompt, isConversation, forceRewrite);
-      const userContent = `Transforma y reescribe el siguiente texto:\n"""\n${rawText}\n"""`;
+      const systemInstruction = buildSystemInstruction(
+        modeKey,
+        customPrompt,
+        isConversation,
+        forceRewrite,
+        resolvedLanguage,
+        rawText
+      );
+      const userContent =
+        modeKey === "translate"
+          ? `Translate the following text to ${resolvedLanguage === "en" ? "ENGLISH" : "SPANISH"}:\n"""\n${rawText}\n"""`
+          : resolvedLanguage === "en"
+          ? `Process and transform the following text strictly in ENGLISH (output 100% in English):\n"""\n${rawText}\n"""`
+          : `Transforma y procesa el siguiente texto estrictamente en ESPAÑOL (salida 100% en español):\n"""\n${rawText}\n"""`;
 
       try {
         const response = await client.models.generateContent({
@@ -153,22 +240,23 @@ async function generateTransformFast(
             text: candidateText,
             modelUsed: modelName,
             latencyMs: Date.now() - t0,
+            resolvedLanguage: detectLanguageFromText(candidateText),
           };
         }
 
-        // Si es la segunda pasada y aún así devolvió texto válido, lo entregamos
         if (candidateText && attempt === 1) {
           return {
             text: candidateText,
             modelUsed: modelName,
             latencyMs: Date.now() - t0,
+            resolvedLanguage: detectLanguageFromText(candidateText),
           };
         }
         console.warn(`[improve] Eco detectado en ${modelName} (intento ${attempt + 1}), forzando reescritura...`);
       } catch (err: any) {
         const msg = err?.message || String(err);
         console.warn(`[improve] Modelo ${modelName} falló:`, msg.slice(0, 140));
-        break; // Pasar al siguiente modelo inmediatamente
+        break;
       }
     }
   }
@@ -580,6 +668,7 @@ Devuelve ÚNICAMENTE las palabras habladas de forma literal y pura, sin comillas
     const mode = req.body?.mode;
     const improveType = req.body?.improveType || req.body?.mode || req.body?.option;
     const customPrompt = (req.body?.customPrompt || req.body?.prompt || "").trim();
+    const targetLanguage = req.body?.targetLanguage || "auto";
 
     if (!rawText) {
       return res.status(400).json({ error: "No hay texto para mejorar" });
@@ -589,12 +678,13 @@ Devuelve ÚNICAMENTE las palabras habladas de forma literal y pura, sin comillas
       mode === "conversation" || rawText.includes("Persona 1:") || rawText.includes("Persona 2:");
 
     try {
-      const genResult = await generateTransformFast(rawText, improveType, customPrompt, isConversation);
+      const genResult = await generateTransformFast(rawText, improveType, customPrompt, isConversation, targetLanguage);
       return res.json({
         text: genResult.text,
         result: genResult.text,
         modelUsed: genResult.modelUsed,
         latencyMs: genResult.latencyMs,
+        resolvedLanguage: genResult.resolvedLanguage,
         usedFallback: false,
       });
     } catch (error: any) {
@@ -616,6 +706,7 @@ Devuelve ÚNICAMENTE las palabras habladas de forma literal y pura, sin comillas
     const mode = req.body?.mode;
     const improveType = req.body?.improveType || req.body?.mode;
     const customPrompt = (req.body?.customPrompt || req.body?.prompt || "").trim();
+    const targetLanguage = req.body?.targetLanguage || "auto";
 
     if (!rawText) {
       return res.status(400).json({ error: "No hay texto para mejorar" });
@@ -632,12 +723,13 @@ Devuelve ÚNICAMENTE las palabras habladas de forma literal y pura, sin comillas
     }
 
     try {
-      const genResult = await generateTransformFast(rawText, improveType, customPrompt, isConversation);
+      const genResult = await generateTransformFast(rawText, improveType, customPrompt, isConversation, targetLanguage);
       res.write(
         `data: ${JSON.stringify({
           text: genResult.text,
           modelUsed: genResult.modelUsed,
           latencyMs: genResult.latencyMs,
+          resolvedLanguage: genResult.resolvedLanguage,
           usedFallback: false,
         })}\n\n`
       );

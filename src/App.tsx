@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic, Square, Play, Pause, Sparkles, Mail, Share2, Cpu, Copy, Trash2,
   Settings, Check, Volume2, RotateCcw, Loader2, Save, ShieldCheck, LogOut,
-  ShoppingCart, Languages, MessageCircle, Upload, ChevronDown, ChevronUp, X, Download
+  ShoppingCart, Languages, MessageCircle, Upload, ChevronDown, ChevronUp, X, Download,
+  User, Camera, Image as ImageIcon
 } from 'lucide-react';
 import { LockScreen, AuthUser } from './components/LockScreen';
 import { DEFAULT_SOCIAL_X_PROMPT, DEFAULT_SOCIAL_INSTAGRAM_PROMPT } from './data/defaultPrompt';
@@ -68,6 +69,10 @@ export default function App() {
       if (!saved) return null;
       const parsed = JSON.parse(saved);
       if (parsed && parsed.email?.toLowerCase().trim() === AUTHORIZED_EMAIL.toLowerCase().trim()) {
+        const savedPic = localStorage.getItem('mywhis_user_picture');
+        if (savedPic) {
+          parsed.picture = savedPic;
+        }
         return parsed;
       }
       return null;
@@ -75,6 +80,18 @@ export default function App() {
       return null;
     }
   });
+
+  const [userPicture, setUserPicture] = useState<string>(() => {
+    try {
+      return localStorage.getItem('mywhis_user_picture') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [photoUrlInput, setPhotoUrlInput] = useState('');
+  const [showPhotoUrlForm, setShowPhotoUrlForm] = useState(false);
+  const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
 
   const [rawText, setRawText] = useState(() => localStorage.getItem('mywhis_raw_text') || localStorage.getItem('vozia_raw_text') || '');
   const [interimText, setInterimText] = useState('');
@@ -209,6 +226,92 @@ export default function App() {
     } catch {
       return '';
     }
+  };
+
+  const handleUploadProfilePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    if (!file.type.startsWith('image/')) {
+      showToast('Por favor selecciona una imagen válida', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        const img = new window.Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 256;
+          let w = img.width;
+          let h = img.height;
+          if (w > h) {
+            if (w > maxDim) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            }
+          } else {
+            if (h > maxDim) {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, w, h);
+            const optimizedBase64 = canvas.toDataURL('image/jpeg', 0.88);
+            setUserPicture(optimizedBase64);
+            try {
+              localStorage.setItem('mywhis_user_picture', optimizedBase64);
+              if (currentUser) {
+                const updated = { ...currentUser, picture: optimizedBase64 };
+                setCurrentUser(updated);
+                localStorage.setItem('mywhis_auth_session', JSON.stringify(updated));
+              }
+            } catch {}
+            showToast('¡Foto de perfil actualizada!');
+          }
+        };
+        img.src = dataUrl;
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSavePhotoUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUrl = photoUrlInput.trim();
+    if (!cleanUrl) return;
+    setUserPicture(cleanUrl);
+    try {
+      localStorage.setItem('mywhis_user_picture', cleanUrl);
+      if (currentUser) {
+        const updated = { ...currentUser, picture: cleanUrl };
+        setCurrentUser(updated);
+        localStorage.setItem('mywhis_auth_session', JSON.stringify(updated));
+      }
+    } catch {}
+    setPhotoUrlInput('');
+    setShowPhotoUrlForm(false);
+    showToast('¡Foto de perfil actualizada!');
+  };
+
+  const handleRemoveProfilePhoto = () => {
+    setUserPicture('');
+    try {
+      localStorage.removeItem('mywhis_user_picture');
+      if (currentUser) {
+        const updated = { ...currentUser, picture: '' };
+        setCurrentUser(updated);
+        localStorage.setItem('mywhis_auth_session', JSON.stringify(updated));
+      }
+    } catch {}
+    showToast('Foto de perfil eliminada');
   };
 
   const handleLogout = () => {
@@ -1090,6 +1193,15 @@ export default function App() {
 
   return (
     <div className="h-[100dvh] max-h-[100dvh] bg-[#090d16] text-slate-100 flex flex-col font-sans overflow-hidden select-none">
+      {/* Input oculto para subir foto de perfil del usuario */}
+      <input
+        ref={profilePhotoInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleUploadProfilePhoto}
+        className="hidden"
+      />
+
       {/* Input oculto para subir audios de WhatsApp (.opus, .ogg, .mp3, .m4a, .wav, .aac) */}
       <input
         ref={whatsAppFileInputRef}
@@ -1106,22 +1218,24 @@ export default function App() {
         </div>
       )}
 
-      {/* CABECERA EXACTA A LA IMAGEN */}
+      {/* CABECERA PRINCIPAL (OPTIMIZADA PARA MÓVIL SIN SUPERPOSICIONES) */}
       <header className="border-b border-slate-800/80 bg-slate-900/70 backdrop-blur-xl shrink-0 z-20">
-        <div className="max-w-6xl mx-auto px-3 py-2 sm:px-4 sm:py-2.5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
+        <div className="max-w-6xl mx-auto px-2.5 py-2 sm:px-4 sm:py-2.5 flex items-center justify-between gap-1.5 sm:gap-2">
+          {/* Logo y estado (lado izquierdo) */}
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md shadow-indigo-500/20 shrink-0">
               <Mic className="w-4 h-4 text-white" />
             </div>
             <div className="min-w-0">
               <h1 className="text-sm sm:text-base font-bold tracking-tight text-white leading-tight truncate">Mywhis</h1>
-              <p className="text-[11px] text-slate-400 truncate leading-none mt-0.5">
+              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate leading-none mt-0.5">
                 {isRecording ? (isPaused ? 'En pausa' : 'Grabando dictado...') : 'Listo para dictar'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Botones de acción (lado derecho) */}
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             {/* Botón Instalar App (para activar Compartir directo desde WhatsApp en Android) */}
             {deferredInstallPrompt && !isStandalonePWA && (
               <button
@@ -1136,7 +1250,7 @@ export default function App() {
                     }
                   } catch {}
                 }}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/40 text-xs font-semibold transition-all cursor-pointer"
+                className="flex items-center gap-1 px-2 py-1.5 sm:px-2.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/40 text-xs font-semibold transition-all cursor-pointer"
                 title="Instalar en el teléfono para compartir directo desde WhatsApp"
               >
                 <Download className="w-3.5 h-3.5 text-indigo-400" />
@@ -1144,47 +1258,62 @@ export default function App() {
               </button>
             )}
 
-            {/* Chip de usuario autenticado (César) */}
-            <div 
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-[11px] sm:text-xs"
-              title={`Iniciado como: ${currentUser.email}`}
+            {/* FOTO / AVATAR DEL USUARIO (Sustituye el correo largo para evitar que se superponga en móvil) */}
+            <button
+              type="button"
+              onClick={() => setShowProfileModal(true)}
+              className="flex items-center gap-1.5 p-0.5 sm:px-2 sm:py-1 rounded-full sm:rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/80 transition-all cursor-pointer group shrink-0"
+              title={`Perfil: ${currentUser.email} · Toca para ver o cambiar foto`}
             >
-              <div className="w-4 h-4 rounded-full bg-indigo-500/30 text-indigo-300 font-bold flex items-center justify-center text-[9px] border border-indigo-500/40">
-                C
+              <div className="w-7 h-7 sm:w-7 sm:h-7 rounded-full overflow-hidden bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-xs shadow-inner ring-1 ring-indigo-400/40 shrink-0 relative">
+                {userPicture ? (
+                  <img
+                    src={userPicture}
+                    alt="Foto de perfil"
+                    className="w-full h-full object-cover"
+                    onError={() => setUserPicture('')}
+                  />
+                ) : (
+                  <span className="font-bold text-indigo-200 text-xs">C</span>
+                )}
               </div>
-              <span className="text-slate-300 font-medium max-w-[90px] sm:max-w-[110px] truncate">
-                {currentUser.email.split('@')[0]}
+              {/* En móviles ocultamos el correo; en pantallas grandes se muestra de forma elegante */}
+              <span className="hidden md:inline text-slate-300 font-medium text-xs max-w-[100px] truncate">
+                {currentUser.name || 'César'}
               </span>
-            </div>
+            </button>
 
+            {/* Botón Resetear */}
             <button
               onClick={handleSystemRecoveryReset}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1.5 sm:px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-all cursor-pointer"
               title="Resetear caché y recuperar sistema"
             >
               <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
               <span className="hidden sm:inline">Resetear</span>
             </button>
 
+            {/* Botón Prompts */}
             <button
               onClick={() => {
                 setTempPrompts(prompts);
                 setShowSettings(true);
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all cursor-pointer"
               title="Configurar Prompts"
             >
               <Settings className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Prompts</span>
+              <span className="hidden xs:inline">Prompts</span>
             </button>
 
+            {/* Botón Salir */}
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition-all cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1.5 sm:px-3 sm:py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition-all cursor-pointer"
               title="Cerrar sesión"
             >
               <LogOut className="w-3.5 h-3.5 text-rose-400" />
-              <span>Salir</span>
+              <span className="hidden xs:inline">Salir</span>
             </button>
           </div>
         </div>
@@ -1787,6 +1916,147 @@ export default function App() {
                   Restaurar todos
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE PERFIL / FOTO DE USUARIO */}
+      {showProfileModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-sm rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col gap-3.5 overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            {/* Cabecera del modal */}
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-indigo-400" />
+                <h2 className="text-sm sm:text-base font-bold text-white">Perfil de Usuario</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfileModal(false);
+                  setShowPhotoUrlForm(false);
+                }}
+                className="p-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white cursor-pointer transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Foto de perfil grande interactiva */}
+            <div className="flex flex-col items-center gap-2.5 py-1 text-center">
+              <div className="relative group">
+                <div className="w-20 h-20 rounded-full overflow-hidden bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-2xl shadow-xl ring-4 ring-indigo-500/30">
+                  {userPicture ? (
+                    <img
+                      src={userPicture}
+                      alt="Foto de perfil"
+                      className="w-full h-full object-cover"
+                      onError={() => setUserPicture('')}
+                    />
+                  ) : (
+                    <span>C</span>
+                  )}
+                </div>
+                {/* Botón flotante de cámara para cambiar foto con un toque */}
+                <button
+                  type="button"
+                  onClick={() => profilePhotoInputRef.current?.click()}
+                  className="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center shadow-md border-2 border-slate-900 cursor-pointer transition-all"
+                  title="Cambiar foto de perfil"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div>
+                <h3 className="text-base font-bold text-white">César</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">{currentUser.email}</p>
+                <div className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[10px] font-semibold">
+                  <ShieldCheck className="w-3 h-3" />
+                  <span>Propietario Verificado</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Acciones para la foto de perfil */}
+            <div className="flex flex-col gap-2 pt-1 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => profilePhotoInputRef.current?.click()}
+                className="w-full py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>{userPicture ? 'Cambiar foto desde el móvil' : 'Subir foto desde el móvil'}</span>
+              </button>
+
+              {!showPhotoUrlForm ? (
+                <button
+                  type="button"
+                  onClick={() => setShowPhotoUrlForm(true)}
+                  className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Pegar enlace o URL de foto de Google</span>
+                </button>
+              ) : (
+                <form onSubmit={handleSavePhotoUrl} className="flex flex-col gap-1.5 p-2 bg-slate-950/70 rounded-xl border border-slate-800">
+                  <span className="text-[10px] text-slate-400">Pega la URL de tu foto de Google o de internet:</span>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="url"
+                      placeholder="https://..."
+                      value={photoUrlInput}
+                      onChange={(e) => setPhotoUrlInput(e.target.value)}
+                      className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!photoUrlInput.trim()}
+                      className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                    >
+                      Guardar
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {userPicture && (
+                <button
+                  type="button"
+                  onClick={handleRemoveProfilePhoto}
+                  className="w-full py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Eliminar foto (usar letra inicial)</span>
+                </button>
+              )}
+            </div>
+
+            {/* Pie de modal */}
+            <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfileModal(false);
+                  handleLogout();
+                }}
+                className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px] cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Cerrar sesión</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowProfileModal(false);
+                  setShowPhotoUrlForm(false);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white text-xs font-medium cursor-pointer"
+              >
+                Listo
+              </button>
             </div>
           </div>
         </div>

@@ -1,6 +1,0 @@
-{
-  "summary":  "Plan de implementación para recibir notas de voz de WhatsApp en Mywhis (mediante Compartir directo en Android PWA Share Target y botón Subir Audio), transcribirlas automáticamente con IA, mostrar el mensaje recibido en un panel superior de contexto, generar una propuesta de respuesta inteligente y permitir dictar o editar la contestación para enviarla de vuelta a WhatsApp.",
-  "updatedAt":  "2026-11-10T17:12:03.824254557Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

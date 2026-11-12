@@ -32,10 +32,11 @@ export const LockScreen: React.FC<LockScreenProps> = ({
     setErrorMessage(null);
 
     setTimeout(() => {
+      const savedPic = typeof window !== 'undefined' ? localStorage.getItem('mywhis_user_picture') || '' : '';
       const authUser: AuthUser = {
         email: authorizedEmail,
         name: 'César',
-        picture: '',
+        picture: savedPic,
         token: 'cesar-vozia-master-pass-2026',
         authMethod: 'google',
         loginAt: Date.now(),
@@ -51,9 +52,11 @@ export const LockScreen: React.FC<LockScreenProps> = ({
     const cleanPin = pinCode.trim().toLowerCase();
 
     if (cleanPin === 'cesar2026' || cleanPin === 'cesar' || cleanPin === 'mywhis2026' || cleanPin === 'mywhis' || cleanPin === 'vozia2026' || cleanPin === '1234') {
+      const savedPic = typeof window !== 'undefined' ? localStorage.getItem('mywhis_user_picture') || '' : '';
       const authUser: AuthUser = {
         email: authorizedEmail,
         name: 'César (Propietario)',
+        picture: savedPic,
         token: 'cesar-vozia-master-pass-2026',
         authMethod: 'master_pin',
         loginAt: Date.now(),
@@ -129,8 +132,16 @@ export const LockScreen: React.FC<LockScreenProps> = ({
           {/* User Account Card */}
           <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between mb-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0">
-                C
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0 overflow-hidden ring-2 ring-indigo-500/30">
+                {typeof window !== 'undefined' && localStorage.getItem('mywhis_user_picture') ? (
+                  <img
+                    src={localStorage.getItem('mywhis_user_picture') || ''}
+                    alt="César"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  'C'
+                )}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
